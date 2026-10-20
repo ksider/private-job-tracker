@@ -1,0 +1,11 @@
+{
+  "name": "self-hosted-job-tracker",
+  "private": true,
+  "workspaces": ["shared", "server", "extension", "web"],
+  "scripts": {
+    "build": "npm run build --workspace=shared && npm run build --workspace=server && npm run build --workspace=extension && npm run build --workspace=web",
+    "test": "npm run build --workspace=shared && npm run test --workspace=server && npm run test --workspace=extension",
+    "dev": "npm run dev --workspace=server"
+  },
+  "devDependencies": { "typescript": "^5.7.3", "vitest": "^3.0.7" }
+}

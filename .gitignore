@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+.env
+.DS_Store
+.ai/nikolai_semenov_master_profile_v1.json
+data/
+*.db
+*.db-*

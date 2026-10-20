@@ -1,0 +1,10 @@
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
+import { buildApp } from './app.js';
+const port = Number(process.env.PORT ?? 3000); const host = process.env.HOST ?? '0.0.0.0';
+const apiToken = process.env.API_TOKEN;
+if (!apiToken) throw new Error('API_TOKEN must be configured. Copy .env.example to .env.');
+const databasePath = process.env.DATABASE_PATH ?? './data/jobs.db';
+if (databasePath !== ':memory:') await mkdir(path.dirname(databasePath), { recursive: true });
+const app = buildApp({ databasePath, apiToken, aiSecretsKey: process.env.AI_SECRETS_KEY, profilePath: process.env.CANDIDATE_PROFILE_PATH });
+await app.listen({ port, host });

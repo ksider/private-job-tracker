@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* There is no web session in LAN-only mode. */
+#logout { display: none; }

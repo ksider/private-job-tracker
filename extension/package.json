@@ -1,0 +1,6 @@
+{
+  "name": "@job-tracker/extension", "private": true, "type": "module",
+  "scripts": { "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs", "test": "vitest run" },
+  "dependencies": { "@job-tracker/shared": "*" },
+  "devDependencies": { "@types/chrome": "^0.0.296" }
+}

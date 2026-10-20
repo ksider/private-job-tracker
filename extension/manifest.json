@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "LAN Job Tracker Collector",
+  "version": "1.0.0",
+  "description": "Explicit, read-only DOM snapshots sent only to your self-hosted Job Tracker.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "icons": {
+    "16": "dist/icon.png",
+    "32": "dist/icon.png",
+    "48": "dist/icon.png",
+    "128": "dist/icon.png"
+  },
+  "action": {
+    "default_title": "Save Job",
+    "default_popup": "dist/popup.html",
+    "default_icon": {
+      "16": "dist/icon.png",
+      "32": "dist/icon.png",
+      "48": "dist/icon.png",
+      "128": "dist/icon.png"
+    }
+  },
+  "options_page": "dist/options.html",
+  "background": { "service_worker": "dist/background/service-worker.js", "type": "module" }
+}
