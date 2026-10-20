@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Saved job bookmark icon">
+  <rect width="1024" height="1024" rx="190" fill="#075CF6"/>
+  <rect x="178" y="144" width="648" height="734" rx="70" fill="#FFFFFF"/>
+  <circle cx="357" cy="290" r="58" fill="#063AAB"/>
+  <path d="M265 424c0-56 43-96 92-96s92 40 92 96v12c0 15-13 27-29 27H294c-16 0-29-12-29-27z" fill="#063AAB"/>
+  <rect x="506" y="260" width="236" height="35" rx="17.5" fill="#B7C9E9"/>
+  <rect x="506" y="336" width="236" height="35" rx="17.5" fill="#B7C9E9"/>
+  <rect x="262" y="513" width="448" height="35" rx="17.5" fill="#B7C9E9"/>
+  <rect x="262" y="597" width="363" height="35" rx="17.5" fill="#B7C9E9"/>
+  <circle cx="285" cy="694" r="18" fill="#B7C9E9"/>
+  <rect x="322" y="677" width="280" height="35" rx="17.5" fill="#B7C9E9"/>
+  <circle cx="285" cy="772" r="18" fill="#B7C9E9"/>
+  <rect x="322" y="755" width="266" height="35" rx="17.5" fill="#B7C9E9"/>
+  <path d="M650 495q0-39 39-39h142q39 0 39 39v350q0 24-23 16l-88-76-87 76q-22 8-22-16z" fill="#0B9AF4" stroke="#FFFFFF" stroke-width="20" stroke-linejoin="round"/>
+</svg>

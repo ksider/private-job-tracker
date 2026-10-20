@@ -4,3 +4,9 @@
 
 /* There is no web session in LAN-only mode. */
 #logout { display: none; }
+
+/* Four columns fit on desktop; scrolling here wastes space and adds a phantom scrollbar. */
+@media (min-width: 1024px) {
+  #board-view { overflow: visible; padding-bottom: 0; }
+  #board { min-width: 0; }
+}
