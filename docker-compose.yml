@@ -1,7 +1,11 @@
 services:
   job-tracker:
     build: .
-    env_file: .env
+    environment:
+      API_TOKEN: ${API_TOKEN:?Set API_TOKEN in the Portainer stack environment variables}
+      AI_SECRETS_KEY: ${AI_SECRETS_KEY:-}
+      DATABASE_PATH: /data/jobs.db
+      CANDIDATE_PROFILE_PATH: /app/.ai/nikolai_semenov_master_profile_v1.json
     ports:
       - "${BIND_IP:-127.0.0.1}:${PORT:-3000}:3000"
     volumes:

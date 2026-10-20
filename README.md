@@ -4,7 +4,7 @@ Private LAN-only job tracker with a Manifest V3 browser collector. The extension
 
 ## Run with Docker
 
-1. Copy `.env.example` to `.env` and set a strong `API_TOKEN` value.
+1. For local Docker Compose, copy `.env.example` to `.env` and set a strong `API_TOKEN` value. For a Git-based Portainer stack, set `API_TOKEN` and `AI_SECRETS_KEY` in Portainer's **Environment variables** instead; `.env` is intentionally not stored in Git.
 2. Keep `BIND_IP=127.0.0.1` for host-only access. To permit LAN access, explicitly set it to the Docker host's LAN IP, such as `192.168.1.100`.
 3. Run `docker compose up -d --build`.
 4. Open `http://<server-ip>:3000`.
