@@ -44,3 +44,8 @@ export const JobEventCreateSchema = z.object({
   note: z.string().trim().max(2_000).optional().default('')
 });
 export type JobEventCreate = z.infer<typeof JobEventCreateSchema>;
+export const TagCreateSchema = z.object({ name: z.string().trim().min(1).max(60), color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#64748b') });
+export const TagPatchSchema = TagCreateSchema.partial().refine(value => Object.keys(value).length > 0, 'At least one field is required');
+export const JobTagsSchema = z.object({ tag_ids: z.array(z.string().uuid()).max(20) });
+export type TagCreate = z.infer<typeof TagCreateSchema>;
+export type TagPatch = z.infer<typeof TagPatchSchema>;

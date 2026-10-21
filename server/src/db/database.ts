@@ -1,10 +1,11 @@
 import Database from 'better-sqlite3';
-import type { InterviewStage, JobEventCreate, JobEventType, JobPatch, JobStatus } from '@job-tracker/shared';
+import type { InterviewStage, JobEventCreate, JobEventType, JobPatch, JobStatus, TagCreate, TagPatch } from '@job-tracker/shared';
 import type { MatchClassification, MatchResult, ProviderType } from '../ai/schemas.js';
 
 export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: string; title?: string; company?: string; location?: string; workplaceType?: string; employmentType?: string; descriptionHtml?: string; descriptionText?: string; warnings: string[]; parseStatus: 'parsed' | 'partial' | 'parse_failed'; parserVersion: string };
 export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; workplace_type: string | null; employment_type: string | null; description_html: string | null; description_text: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; parse_status: string; last_event_at: string };
 export type JobEventRow = { id: string; job_id: string; type: JobEventType; occurred_at: string; note: string; created_at: string };
+export type TagRow = { id: string; name: string; color: string; created_at: string; updated_at: string };
 export type AiConnectionRow = { id: string; provider_type: ProviderType; display_name: string; base_url: string | null; encrypted_api_key: string; model: string; max_output_tokens: number; timeout_ms: number; enabled: number; profile_consent_at: string | null; created_at: string; updated_at: string };
 export type AiConnectionPublic = Omit<AiConnectionRow, 'encrypted_api_key' | 'enabled'> & { enabled: boolean; api_key_configured: boolean };
 export type AiSettingsRow = { default_connection_id: string | null; default_model: string | null };
@@ -48,6 +49,9 @@ export class JobDatabase {
         classification TEXT, result_json TEXT, status TEXT NOT NULL, error_message TEXT,
         created_at TEXT NOT NULL, completed_at TEXT);
       CREATE INDEX IF NOT EXISTS job_match_analyses_job_date ON job_match_analyses(job_id, created_at DESC);`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, color TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS job_tags (job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY(job_id, tag_id));
+      CREATE INDEX IF NOT EXISTS job_tags_tag_id ON job_tags(tag_id);`);
     const jobColumns = this.db.prepare('PRAGMA table_info(jobs)').all() as Array<{ name: string }>;
     if (!jobColumns.some(column => column.name === 'interview_stage')) this.db.exec('ALTER TABLE jobs ADD COLUMN interview_stage TEXT');
     this.db.exec("UPDATE jobs SET interview_stage='interview' WHERE status='interview' AND interview_stage IS NULL");
@@ -75,13 +79,15 @@ export class JobDatabase {
     this.db.prepare('INSERT INTO snapshots (id,job_id,source,source_url,content_type,raw_html,raw_text,collector_version,parser_version,parse_status,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, parsed.source, parsed.sourceUrl, 'job', raw.html, raw.text, raw.collectorVersion, parsed.parserVersion, parsed.parseStatus, raw.capturedAt, now);
     return { jobId, action };
   }
-  list(filters: { search?: string; status?: string; source?: string; order?: string; archive?: string }) {
+  list(filters: { search?: string; status?: string; source?: string; tag?: string; order?: string; archive?: string }) {
     const where: string[] = []; const values: unknown[] = [];
     if (filters.search) { where.push('(title LIKE ? OR company LIKE ?)'); values.push(`%${filters.search}%`, `%${filters.search}%`); }
     if (filters.status) { where.push('status = ?'); values.push(filters.status); }
     if (filters.source) { where.push('source = ?'); values.push(filters.source); }
+    if (filters.tag) { where.push('EXISTS (SELECT 1 FROM job_tags WHERE job_tags.job_id=jobs.id AND job_tags.tag_id=?)'); values.push(filters.tag); }
     if (filters.archive === 'only') where.push("status = 'archived'");
     else where.push("status != 'archived'");
+    const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: 'jobs.updated_at DESC', company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: 'jobs.title COLLATE NOCASE ASC', waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
     return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id), jobs.created_at) AS last_event_at,
       (SELECT classification FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_classification,
       (SELECT result_json FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_result_json,
@@ -89,7 +95,7 @@ export class JobDatabase {
       (SELECT completed_at FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_completed_at,
       (SELECT profile_hash FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_profile_hash,
       (SELECT job_description_hash FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_job_hash
-      FROM jobs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY captured_at ${filters.order === 'asc' ? 'ASC' : 'DESC'}`).all(...values) as JobRow[];
+      FROM jobs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`).all(...values) as JobRow[];
   }
   get(id: string) { return this.db.prepare('SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id), jobs.created_at) AS last_event_at FROM jobs WHERE id=?').get(id) as JobRow | undefined; }
   events(id: string) { return this.db.prepare('SELECT * FROM job_events WHERE job_id=? ORDER BY occurred_at DESC, created_at DESC').all(id) as JobEventRow[]; }
@@ -106,6 +112,12 @@ export class JobDatabase {
     return this.get(id);
   }
   delete(id: string) { return this.db.prepare('DELETE FROM jobs WHERE id=?').run(id).changes > 0; }
+  listTags() { return this.db.prepare('SELECT * FROM tags ORDER BY name COLLATE NOCASE').all() as TagRow[]; }
+  createTag(input: TagCreate) { const now = new Date().toISOString(); const tag = { id: crypto.randomUUID(), ...input, created_at: now, updated_at: now }; this.db.prepare('INSERT INTO tags (id,name,color,created_at,updated_at) VALUES (?,?,?,?,?)').run(tag.id, tag.name, tag.color, now, now); return tag; }
+  updateTag(id: string, input: TagPatch) { const old = this.db.prepare('SELECT * FROM tags WHERE id=?').get(id) as TagRow | undefined; if (!old) return undefined; const now = new Date().toISOString(); this.db.prepare('UPDATE tags SET name=?, color=?, updated_at=? WHERE id=?').run(input.name ?? old.name, input.color ?? old.color, now, id); return this.db.prepare('SELECT * FROM tags WHERE id=?').get(id) as TagRow; }
+  deleteTag(id: string) { return this.db.prepare('DELETE FROM tags WHERE id=?').run(id).changes > 0; }
+  tagsForJob(id: string) { return this.db.prepare('SELECT tags.* FROM tags JOIN job_tags ON job_tags.tag_id=tags.id WHERE job_tags.job_id=? ORDER BY tags.name COLLATE NOCASE').all(id) as TagRow[]; }
+  setTags(id: string, tagIds: string[]) { if (!this.get(id)) return undefined; const uniqueTagIds = [...new Set(tagIds)]; const existing = this.db.prepare(`SELECT id FROM tags WHERE id IN (${uniqueTagIds.map(() => '?').join(',') || "''"})`).all(...uniqueTagIds) as Array<{ id: string }>; if (existing.length !== uniqueTagIds.length) throw new Error('Unknown tag'); const transaction = this.db.transaction(() => { this.db.prepare('DELETE FROM job_tags WHERE job_id=?').run(id); const insert = this.db.prepare('INSERT INTO job_tags (job_id,tag_id) VALUES (?,?)'); uniqueTagIds.forEach(tagId => insert.run(id, tagId)); }); transaction(); return this.tagsForJob(id); }
   latestSnapshot(id: string) { return this.db.prepare('SELECT * FROM snapshots WHERE job_id=? ORDER BY created_at DESC LIMIT 1').get(id) as { raw_html: string; raw_text: string | null; captured_at: string } | undefined; }
   listConnections() { return (this.db.prepare('SELECT * FROM ai_provider_connections ORDER BY created_at DESC').all() as AiConnectionRow[]).map(this.publicConnection); }
   private publicConnection = ({ encrypted_api_key, enabled, ...row }: AiConnectionRow): AiConnectionPublic => ({ ...row, enabled: Boolean(enabled), api_key_configured: Boolean(encrypted_api_key) });
