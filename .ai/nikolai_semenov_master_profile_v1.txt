@@ -1,0 +1,1680 @@
+{
+  "schema_version": "1.0.0",
+  "profile_id": "nikolai-semenov-master-profile",
+  "document_type": "candidate_master_profile_seed",
+  "language": "en",
+  "generated_at": "2026-10-20",
+  "review_status": "draft_requires_user_review",
+  "usage": {
+    "purpose": "Evidence-based job matching and CV gap analysis in a self-hosted Job Tracker",
+    "not_a_cv": true,
+    "privacy": "Professional-only profile; phone, email, exact home address, family and medical information intentionally excluded.",
+    "data_handling": "For local import by default. Obtain explicit consent before sending to any external LLM API.",
+    "trust_policy": "Source-supported statements are self-reported professional facts, not independent verification. Require user review before setting verified=true. Never infer missing experience as absence."
+  },
+  "sources": [
+    {
+      "id": "SRC-ENG-CV",
+      "type": "candidate_cv",
+      "name": "Nikolai_Semenov_CV_Engineer.pdf",
+      "description": "Engineering-oriented CV, 4 pages"
+    },
+    {
+      "id": "SRC-RND-CV",
+      "type": "candidate_cv",
+      "name": "Nikolai_Semenov_CV_wr.pdf",
+      "description": "Research-oriented CV, 6 pages"
+    },
+    {
+      "id": "SRC-CHAT",
+      "type": "candidate_self_report",
+      "name": "Earlier user-provided career/project discussions",
+      "description": "Additional technical context and equipment details; review accuracy and confidentiality before external sharing"
+    }
+  ],
+  "identity": {
+    "full_name": "Nikolai Semenov",
+    "current_location": {
+      "city": "Belgrade",
+      "country": "Serbia"
+    },
+    "professional_titles": [
+      "Materials Scientist",
+      "Polymer Engineer",
+      "R&D / Process Engineer",
+      "Head of R&D"
+    ],
+    "languages": [
+      {
+        "language": "Russian",
+        "level": "native",
+        "source_ids": [
+          "SRC-ENG-CV",
+          "SRC-RND-CV"
+        ]
+      },
+      {
+        "language": "English",
+        "level": "B2",
+        "source_ids": [
+          "SRC-RND-CV",
+          "SRC-CHAT"
+        ]
+      },
+      {
+        "language": "Serbian",
+        "level": "basic",
+        "source_ids": [
+          "SRC-CHAT"
+        ],
+        "review_required": true
+      },
+      {
+        "language": "Spanish",
+        "level": "A1",
+        "source_ids": [
+          "SRC-CHAT"
+        ],
+        "review_required": true
+      }
+    ]
+  },
+  "summary": {
+    "years_in_field": "18+ as of 2026 (polymer science since 2008; overlapping roles not double-counted)",
+    "text": "Materials scientist and polymer R&D/process engineer with experience in polymer physics, rheology, composite formulation, processing-sensitive materials, industrial troubleshooting and lab-to-pilot/industrial scale-up. Work spans elastomers, silicones, field-responsive polymer systems, thermoplastic biopolymer blends and natural-filler composites for rigid food-contact packaging. Experienced in building R&D laboratories, leading small technical teams, developing SOPs, and transferring formulations to extrusion and injection-molding processes.",
+    "specializations": [
+      "Polymer rheology and viscoelasticity",
+      "Polymer formulations and filled composites",
+      "Twin-screw compounding and extrusion",
+      "Injection molding and process window development",
+      "Biobased and biodegradable materials",
+      "Experimental characterization and process troubleshooting",
+      "Laboratory-to-pilot/industrial scale-up"
+    ],
+    "sources": [
+      "SRC-ENG-CV",
+      "SRC-RND-CV"
+    ]
+  },
+  "career_preferences": {
+    "target_roles": [
+      "Senior Polymer Engineer",
+      "Senior Materials Scientist",
+      "Senior R&D Engineer",
+      "Polymer Processing / Compounding Engineer",
+      "Principal Polymer Engineer",
+      "Applied Scientist",
+      "Hands-on R&D Manager"
+    ],
+    "preferred_domains": [
+      "Polymer/materials R&D",
+      "Polymer processing and scale-up",
+      "Biobased materials",
+      "Composites",
+      "Advanced functional materials"
+    ],
+    "mobility": "Open to international relocation",
+    "work_authorization": {
+      "current_residence": "Serbia permanent residence (self-reported)",
+      "eu_uk_sponsorship": "Typically required for employment in EU/UK; verify per country and role",
+      "status": "review_required",
+      "citizenship": "Russian Federation (self-reported)",
+      "visa_information_is_time_sensitive": true
+    },
+    "relocation_lead_time": {
+      "value": "approximately 2-3 months",
+      "as_of": "2026-09",
+      "status": "review_required"
+    },
+    "earliest_start": {
+      "value": "available for near-term start (depends on relocation/visa)",
+      "as_of": "2026-09",
+      "status": "review_required"
+    },
+    "compensation": [
+      {
+        "market": "United Kingdom",
+        "currency": "GBP",
+        "minimum_annual_gross": 42000,
+        "as_of": "2026-09",
+        "status": "review_required"
+      }
+    ]
+  },
+  "education": [
+    {
+      "id": "EDU-PHD",
+      "degree": "Candidate of Sciences (PhD-equivalent)",
+      "field": "Mechanics of Fluid, Gas and Plasma",
+      "specialization": "Polymer rheology; electrically controlled polyimide-based nanosuspensions",
+      "institution": "Institute of Applied Mechanics, Russian Academy of Sciences",
+      "location": "Moscow, Russia",
+      "start": "2009-09",
+      "end": "2013-08",
+      "dissertation": "Rheology and Mechanics of Electrically Controlled Polyimide-Based Nanosuspensions",
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "id": "EDU-ENG",
+      "degree": "Engineer Degree (MSc-equivalent) and Bachelor",
+      "field": "Materials Science and Technology of New Materials",
+      "institution": "Moscow State Academy of Fine Chemical Technology",
+      "location": "Moscow, Russia",
+      "start": "2003-09",
+      "end": "2009-02",
+      "thesis": "Study of Reinforcing Activity of Nanofillers of Different Nature According to Physical-Mechanical and Dynamic Tests",
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ]
+    }
+  ],
+  "experience": [
+    {
+      "id": "EXP-BPACKS",
+      "organization": "Bpacks Lab",
+      "location": "Belgrade, Serbia",
+      "title": "Head of R&D / Co-founder",
+      "employment_type": "full-time",
+      "start": "2023-07",
+      "end": "2026-05",
+      "current": false,
+      "domain": "Biobased and fibre-filled polymer composites for rigid food-contact packaging",
+      "responsibilities": [
+        "Established laboratory and R&D methods; specified and qualified equipment and suppliers",
+        "Recruited and led a 4-person technical team (2 PhDs and 2 engineers)",
+        "Designed formulations, experimental programs, QC and technical protocols",
+        "Developed process windows for compounding, extrusion, injection molding and thermoforming",
+        "Coordinated pilot customers, suppliers, external processors and scale-up trials",
+        "Supported EU food-contact documentation and migration-related evaluation"
+      ],
+      "project_ids": [
+        "PRJ-BPACKS-MATERIAL",
+        "PRJ-BPACKS-SCALEUP"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "id": "EXP-IAM",
+      "organization": "Institute of Applied Mechanics, Russian Academy of Sciences",
+      "location": "Moscow, Russia",
+      "title": "Senior Researcher, Polymer Materials Science",
+      "progression": [
+        {
+          "year": 2008,
+          "role": "Lab Assistant"
+        },
+        {
+          "year": 2009,
+          "role": "Junior Researcher"
+        },
+        {
+          "year": 2013,
+          "role": "Researcher"
+        },
+        {
+          "year": 2018,
+          "role": "Senior Researcher"
+        }
+      ],
+      "employment_type": "research",
+      "start": "2008-01",
+      "end": "2023-03",
+      "current": false,
+      "domain": "Polymer rheology, soft matter mechanics, filled composites, smart materials and industrial R&D",
+      "responsibilities": [
+        "Designed and ran rheological and mechanical experiments on polymer composites",
+        "Developed reinforced elastomers, field-responsive materials and interfacial modification approaches",
+        "Led/coordinated experimental tasks in cross-functional industrial-academic programs",
+        "Used probe microscopy/interferometry to diagnose microstructure and filler-matrix effects",
+        "Prepared technology-transfer reports, publications and training materials",
+        "Supervised and mentored research personnel and MSc students"
+      ],
+      "project_ids": [
+        "PRJ-ER-MR",
+        "PRJ-FILLER-SILANE",
+        "PRJ-DAMPERS",
+        "PRJ-SILICONE",
+        "PRJ-NANOFILLER",
+        "PRJ-BIOSORBENT",
+        "PRJ-IMPACT"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "id": "EXP-BEREZKA",
+      "organization": "BERЁZKA",
+      "location": "Moscow, Russia",
+      "title": "Director of Innovation & Co-founder",
+      "employment_type": "part-time (~20% FTE)",
+      "start": "2020-06",
+      "end": "2023-03",
+      "current": false,
+      "domain": "Plant-based biodegradable composites for injection-molded tableware",
+      "responsibilities": [
+        "Co-founded project and led applied materials research",
+        "Developed plant-based formulations for injection molding",
+        "Evaluated material degradation and environmental stability",
+        "Conducted pilot production validation and mold-filling analysis"
+      ],
+      "project_ids": [
+        "PRJ-BEREZKA"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "id": "EXP-CONSULT",
+      "organization": "Independent Consulting",
+      "location": "Remote / multiple clients",
+      "title": "Technology Consultant — Polymer Processing",
+      "employment_type": "part-time (~5% FTE)",
+      "start": "2018-02",
+      "end": "2021-12",
+      "current": false,
+      "domain": "Process start-up, formulations, QC and troubleshooting for SMEs",
+      "responsibilities": [
+        "Advised 5+ SME clients on compounding, extrusion and injection-molding process issues",
+        "Commissioned and stabilized a compounding line",
+        "Developed 10+ tailored material formulations across WPC, recycled PVC, elastomers and silicones",
+        "Set up QC and raw-material qualification workflows"
+      ],
+      "project_ids": [
+        "PRJ-CONSULT"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "id": "PRJ-BPACKS-MATERIAL",
+      "title": "Biobased composites for rigid food-contact packaging",
+      "experience_id": "EXP-BPACKS",
+      "period": "2023-2026",
+      "materials": [
+        "TPS",
+        "PLA",
+        "PBS",
+        "PBAT",
+        "Bark/natural fibre fillers",
+        "Mineral fillers"
+      ],
+      "work": [
+        "Formulation development and characterization",
+        "Barrier packaging material validation",
+        "Pilot-customer trials",
+        "Food-contact documentation"
+      ],
+      "results": [
+        "6+ formulations developed and validated at pilot-customer level",
+        "Reported shelf-life gains: berries +7 days; mushrooms +4 days (review metrics before reuse)"
+      ],
+      "evidence_ids": [
+        "EV-BPACKS-FORM",
+        "EV-BPACKS-SHELF",
+        "EV-BPACKS-LAB",
+        "EV-FCM"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV",
+        "SRC-CHAT"
+      ]
+    },
+    {
+      "id": "PRJ-BPACKS-SCALEUP",
+      "title": "Scale-up and processing stabilization of moisture-sensitive polymer blends",
+      "experience_id": "EXP-BPACKS",
+      "period": "2023-2026",
+      "materials": [
+        "TPS/polyester blends",
+        "Fibre-filled biopolymer compounds"
+      ],
+      "work": [
+        "Twin-screw compounding",
+        "Pilot and industrial extrusion trials",
+        "Injection molding and tooling/process-window optimization",
+        "Moisture-related defect root-cause analysis"
+      ],
+      "results": [
+        "2+ formulations scaled beyond laboratory stage",
+        "3 industrial scale-up runs stabilized according to engineering CV"
+      ],
+      "evidence_ids": [
+        "EV-BPACKS-SCALE",
+        "EV-PROCESS-TROUBLE",
+        "EV-ALT-MOLD"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-CHAT"
+      ]
+    },
+    {
+      "id": "PRJ-ER-MR",
+      "title": "Electro- and magnetorheological systems for semi-active vibration control",
+      "experience_id": "EXP-IAM",
+      "period": "2014-2016",
+      "materials": [
+        "Electrorheological suspensions",
+        "Field-responsive elastomers",
+        "Polyimide particles"
+      ],
+      "work": [
+        "Rheological/electrorheological characterization",
+        "Experimental leadership",
+        "Prototype device collaboration"
+      ],
+      "results": [
+        "Experimental program and functioning device prototypes reported"
+      ],
+      "evidence_ids": [
+        "EV-RHEO-ER",
+        "EV-RESEARCH-LEAD"
+      ],
+      "source_ids": [
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "id": "PRJ-FILLER-SILANE",
+      "title": "Organosilane modification of mineral fillers for elastomer composites",
+      "experience_id": "EXP-IAM",
+      "period": "2014-2016",
+      "materials": [
+        "Elastomers",
+        "Mineral fillers",
+        "Organosilanes",
+        "Shungite/silica-based particles"
+      ],
+      "work": [
+        "Filler surface treatment",
+        "In-situ modification during milling",
+        "Macromechanical/rheological testing"
+      ],
+      "results": [
+        "Surface-modification procedure implemented; related publication"
+      ],
+      "evidence_ids": [
+        "EV-FILLER-INTERFACE",
+        "EV-FILLER-TREAT"
+      ],
+      "source_ids": [
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "id": "PRJ-DAMPERS",
+      "title": "Elastomeric torsion dampers for high-voltage power lines",
+      "experience_id": "EXP-IAM",
+      "period": "2017-2019",
+      "materials": [
+        "Rubber/elastomeric damping formulations"
+      ],
+      "work": [
+        "Material formulation",
+        "Damping and mechanical performance testing",
+        "Preparation of industrial-implementation documentation"
+      ],
+      "results": [
+        "Developed compositions for approximately -50 to +30 °C operating envelope (as reported in CV)"
+      ],
+      "evidence_ids": [
+        "EV-DAMPERS"
+      ],
+      "source_ids": [
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "id": "PRJ-SILICONE",
+      "title": "Silicone insulators and industrial silicone processing",
+      "experience_id": "EXP-IAM",
+      "period": null,
+      "materials": [
+        "Silicone elastomers",
+        "Modified fillers"
+      ],
+      "work": [
+        "Insulator formulation and scale-up",
+        "Production SOP preparation",
+        "Process troubleshooting"
+      ],
+      "results": [
+        "Industrial process documentation prepared"
+      ],
+      "evidence_ids": [
+        "EV-SILICONE"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV",
+        "SRC-CHAT"
+      ]
+    },
+    {
+      "id": "PRJ-NANOFILLER",
+      "title": "Nanofiller reinforcement in hyperelastic composites",
+      "experience_id": "EXP-IAM",
+      "period": "2011-2013",
+      "materials": [
+        "Elastomers",
+        "Carbon nanotubes",
+        "Mineral fillers"
+      ],
+      "work": [
+        "Payne-effect studies",
+        "AFM/probe microscopy",
+        "Mechanical/rheological testing"
+      ],
+      "results": [
+        "Research program completed; associated publications"
+      ],
+      "evidence_ids": [
+        "EV-RHEO-ER",
+        "EV-FILLER-INTERFACE",
+        "EV-AFM"
+      ],
+      "source_ids": [
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "id": "PRJ-BIOSORBENT",
+      "title": "Magnetically responsive core-shell sorbents",
+      "experience_id": "EXP-IAM",
+      "period": null,
+      "materials": [
+        "Magnetic sorbent composites"
+      ],
+      "work": [
+        "Materials development",
+        "Selective extraction and bio-fluid analytical workflow development"
+      ],
+      "results": [],
+      "evidence_ids": [
+        "EV-FUNCTIONAL-MAT"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV"
+      ]
+    },
+    {
+      "id": "PRJ-IMPACT",
+      "title": "Surface diagnostics of impact-damaged composite screens",
+      "experience_id": "EXP-IAM",
+      "period": "2015",
+      "materials": [
+        "Impact-damaged material specimens"
+      ],
+      "work": [
+        "Optical microscopy",
+        "AFM",
+        "Interferometric topography"
+      ],
+      "results": [],
+      "evidence_ids": [
+        "EV-AFM"
+      ],
+      "source_ids": [
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "id": "PRJ-BEREZKA",
+      "title": "Plant-based injection-molded disposable tableware",
+      "experience_id": "EXP-BEREZKA",
+      "period": "2020-2023",
+      "materials": [
+        "Plant-derived polymer composites"
+      ],
+      "work": [
+        "Formulation and compounding",
+        "Injection molding",
+        "Degradation and saline-water stability tests",
+        "Mold-flow simulation"
+      ],
+      "results": [
+        "Pilot manufacturing MVP of approximately 1,000-2,000 forks reported in earlier discussions",
+        "Pilot manufacturing validation within ~18 months per research CV"
+      ],
+      "evidence_ids": [
+        "EV-BEREZKA-PILOT",
+        "EV-MOLDFLOW"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV",
+        "SRC-CHAT"
+      ]
+    },
+    {
+      "id": "PRJ-CONSULT",
+      "title": "SME polymer processing consulting",
+      "experience_id": "EXP-CONSULT",
+      "period": "2018-2021",
+      "materials": [
+        "Wood-plastic composites",
+        "Recycled PVC",
+        "Rubber/elastomers",
+        "Silicones"
+      ],
+      "work": [
+        "Extrusion/injection process start-up",
+        "Compounding line commissioning",
+        "Customized compound development",
+        "QC and supplier/raw-material qualification"
+      ],
+      "results": [
+        "5+ SME clients; one compounding line; 10+ formulations (as reported in engineering CV)"
+      ],
+      "evidence_ids": [
+        "EV-CONS-FORM",
+        "EV-CONS-LINE",
+        "EV-QC"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "EV-BPACKS-LAB",
+      "statement": "Built a polymer R&D lab and led 4-person team (2 PhDs and 2 engineers).",
+      "experience_id": "EXP-BPACKS",
+      "skill_ids": [
+        "lab_setup",
+        "technical_leadership",
+        "supplier_qualification"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-BPACKS-FORM",
+      "statement": "Developed 6+ biobased and fibre-filled formulations for rigid packaging and pilot-customer validation.",
+      "experience_id": "EXP-BPACKS",
+      "skill_ids": [
+        "polymer_formulation",
+        "biobased_materials",
+        "polymer_composites",
+        "food_packaging"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-BPACKS-SHELF",
+      "statement": "Reported packaging shelf-life gains for fresh berries and mushrooms; check exact baseline and delta before presenting externally.",
+      "experience_id": "EXP-BPACKS",
+      "skill_ids": [
+        "barrier_packaging",
+        "food_packaging"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV",
+        "SRC-CHAT"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-BPACKS-SCALE",
+      "statement": "Scaled 2+ formulations from lab to pilot/industrial extrusion and injection molding; stabilized multiple industrial runs.",
+      "experience_id": "EXP-BPACKS",
+      "skill_ids": [
+        "scale_up",
+        "twin_screw_compounding",
+        "extrusion",
+        "injection_molding",
+        "industrial_trials"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-PROCESS-TROUBLE",
+      "statement": "Investigated and mitigated moisture-sensitive processing issues and molding defects, using formulation and process changes.",
+      "experience_id": "EXP-BPACKS",
+      "skill_ids": [
+        "troubleshooting",
+        "process_window",
+        "moisture_sensitive_polymers",
+        "injection_molding"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-CHAT"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-FCM",
+      "statement": "Prepared food-contact material specifications and pilot-customer technical documentation using EU food-contact framework.",
+      "experience_id": "EXP-BPACKS",
+      "skill_ids": [
+        "food_contact_compliance",
+        "technical_documentation",
+        "qc_methods"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-RHEO-ER",
+      "statement": "PhD and experimental work on rheology and electro-/magnetorheological polymer suspensions and elastomers.",
+      "experience_id": "EXP-IAM",
+      "skill_ids": [
+        "polymer_rheology",
+        "viscoelasticity",
+        "electrorheology",
+        "materials_characterization"
+      ],
+      "source_ids": [
+        "SRC-RND-CV",
+        "SRC-ENG-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-RESEARCH-LEAD",
+      "statement": "Led experimental work and coordinated research groups for field-responsive vibration-control devices.",
+      "experience_id": "EXP-IAM",
+      "skill_ids": [
+        "research_leadership",
+        "experimental_design",
+        "electrorheology"
+      ],
+      "source_ids": [
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-FILLER-INTERFACE",
+      "statement": "Investigated reinforcement mechanisms and filler-matrix interactions using mechanical/rheological and surface characterization.",
+      "experience_id": "EXP-IAM",
+      "skill_ids": [
+        "reinforcement_mechanisms",
+        "polymer_composites",
+        "polymer_rheology",
+        "materials_characterization"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-FILLER-TREAT",
+      "statement": "Implemented organosilane-based mineral filler modification, including in-situ milling treatment.",
+      "experience_id": "EXP-IAM",
+      "skill_ids": [
+        "filler_surface_treatment",
+        "polymer_formulation",
+        "reinforcement_mechanisms"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-AFM",
+      "statement": "Applied AFM, optical microscopy and interferometry to filled composites and impact-damaged materials.",
+      "experience_id": "EXP-IAM",
+      "skill_ids": [
+        "afm",
+        "microscopy",
+        "interferometry",
+        "materials_characterization"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-DAMPERS",
+      "statement": "Formulated and evaluated elastomeric torsion damper materials for high-voltage power-line applications.",
+      "experience_id": "EXP-IAM",
+      "skill_ids": [
+        "elastomers",
+        "damping_materials",
+        "mechanical_testing",
+        "polymer_formulation"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-SILICONE",
+      "statement": "Developed silicone insulator formulations and SOPs for industrial implementation.",
+      "experience_id": "EXP-IAM",
+      "skill_ids": [
+        "silicone_elastomers",
+        "polymer_formulation",
+        "technical_documentation",
+        "scale_up"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-FUNCTIONAL-MAT",
+      "statement": "Developed magnetically responsive core-shell sorbents and workflows for selective extraction.",
+      "experience_id": "EXP-IAM",
+      "skill_ids": [
+        "functional_materials",
+        "composites_research"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-BEREZKA-PILOT",
+      "statement": "Directed R&D of plant-based injection-molded tableware; developed pilot manufacturing MVP and degradation tests.",
+      "experience_id": "EXP-BEREZKA",
+      "skill_ids": [
+        "biobased_materials",
+        "polymer_formulation",
+        "injection_molding",
+        "environmental_stability"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-MOLDFLOW",
+      "statement": "Applied SolidWorks Plastics for basic mold-filling checks, including weld-line and air-trap analysis in the BERЁZKA project.",
+      "experience_id": "EXP-BEREZKA",
+      "skill_ids": [
+        "basic_moldflow",
+        "injection_molding",
+        "tooling_review"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-CONS-FORM",
+      "statement": "Reported development of 10+ tailored polymer formulations for 5+ SME clients, including WPC, recycled PVC, elastomers and silicones.",
+      "experience_id": "EXP-CONSULT",
+      "skill_ids": [
+        "polymer_formulation",
+        "wpc",
+        "recycled_pvc",
+        "elastomers",
+        "silicone_elastomers"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-CONS-LINE",
+      "statement": "Commissioned and stabilized one industrial compounding line, including first-article qualification.",
+      "experience_id": "EXP-CONSULT",
+      "skill_ids": [
+        "industrial_commissioning",
+        "extrusion",
+        "scale_up",
+        "troubleshooting"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-QC",
+      "statement": "Implemented QC procedures and raw-material qualification workflows for consulting clients.",
+      "experience_id": "EXP-CONSULT",
+      "skill_ids": [
+        "qc_methods",
+        "supplier_qualification",
+        "technical_documentation"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV or prior self-report",
+      "independently_verified": false
+    },
+    {
+      "id": "EV-ALT-MOLD",
+      "statement": "Applied Altair Inspire Mold for geometry manufacturability pre-screening, draft-angle/venting and air-trap analysis for Bpacks packaging parts.",
+      "experience_id": "EXP-BPACKS",
+      "skill_ids": [
+        "basic_moldflow",
+        "tooling_review",
+        "injection_molding"
+      ],
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ],
+      "verification_status": "draft",
+      "source_assertion": "candidate-authored CV",
+      "independently_verified": false
+    }
+  ],
+  "skills": [
+    {
+      "id": "polymer_formulation",
+      "name": "Polymer formulation and compound development",
+      "category": "formulation",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-FORM",
+        "EV-FILLER-TREAT",
+        "EV-DAMPERS",
+        "EV-SILICONE",
+        "EV-BEREZKA-PILOT",
+        "EV-CONS-FORM"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "polymer_composites",
+      "name": "Filled polymer and composite materials",
+      "category": "materials",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-FORM",
+        "EV-FILLER-INTERFACE"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "polymer_rheology",
+      "name": "Polymer rheology",
+      "category": "characterization",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-RHEO-ER",
+        "EV-FILLER-INTERFACE"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "viscoelasticity",
+      "name": "Viscoelasticity and non-Newtonian fluids",
+      "category": "theory_and_experiment",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-RHEO-ER"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "electrorheology",
+      "name": "Electro-/magnetorheological systems",
+      "category": "functional_materials",
+      "proficiency_basis": "research_hands_on",
+      "evidence_ids": [
+        "EV-RHEO-ER",
+        "EV-RESEARCH-LEAD"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "biobased_materials",
+      "name": "Biobased and biodegradable polymer systems",
+      "category": "materials",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-FORM",
+        "EV-BEREZKA-PILOT"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "food_packaging",
+      "name": "Rigid food-contact packaging materials",
+      "category": "applications",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-FORM",
+        "EV-BPACKS-SHELF"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "barrier_packaging",
+      "name": "Packaging barrier and shelf-life evaluation",
+      "category": "applications",
+      "proficiency_basis": "project_hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-SHELF"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "twin_screw_compounding",
+      "name": "Twin-screw compounding",
+      "category": "processing",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-SCALE"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "extrusion",
+      "name": "Extrusion and compounding scale-up",
+      "category": "processing",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-SCALE",
+        "EV-CONS-LINE"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "injection_molding",
+      "name": "Injection molding",
+      "category": "processing",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-SCALE",
+        "EV-PROCESS-TROUBLE",
+        "EV-BEREZKA-PILOT",
+        "EV-MOLDFLOW",
+        "EV-ALT-MOLD"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "scale_up",
+      "name": "Laboratory-to-pilot/industrial scale-up",
+      "category": "processing",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-SCALE",
+        "EV-SILICONE",
+        "EV-CONS-LINE"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "industrial_trials",
+      "name": "Industrial trials coordination",
+      "category": "processing",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-SCALE"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "process_window",
+      "name": "Process-window development",
+      "category": "processing",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-PROCESS-TROUBLE"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "troubleshooting",
+      "name": "Process troubleshooting and root-cause analysis",
+      "category": "methods",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-PROCESS-TROUBLE",
+        "EV-CONS-LINE"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "moisture_sensitive_polymers",
+      "name": "Moisture-sensitive polymer processing",
+      "category": "processing",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-PROCESS-TROUBLE"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "reinforcement_mechanisms",
+      "name": "Reinforcement and filler–matrix interactions",
+      "category": "materials",
+      "proficiency_basis": "research_hands_on",
+      "evidence_ids": [
+        "EV-FILLER-INTERFACE",
+        "EV-FILLER-TREAT"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "filler_surface_treatment",
+      "name": "Filler organosilane surface treatment",
+      "category": "formulation",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-FILLER-TREAT"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "afm",
+      "name": "Atomic force microscopy",
+      "category": "characterization",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-AFM"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "microscopy",
+      "name": "Optical/probe microscopy",
+      "category": "characterization",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-AFM"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "interferometry",
+      "name": "Surface interferometric analysis",
+      "category": "characterization",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-AFM"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "materials_characterization",
+      "name": "Material structure-property characterization",
+      "category": "characterization",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-RHEO-ER",
+        "EV-FILLER-INTERFACE",
+        "EV-AFM"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "mechanical_testing",
+      "name": "Mechanical material testing",
+      "category": "characterization",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-DAMPERS"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "elastomers",
+      "name": "Rubber and elastomeric composites",
+      "category": "materials",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-DAMPERS",
+        "EV-CONS-FORM"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "silicone_elastomers",
+      "name": "Industrial silicone elastomer formulation",
+      "category": "materials",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-SILICONE",
+        "EV-CONS-FORM"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "damping_materials",
+      "name": "Viscoelastic vibration-damping materials",
+      "category": "applications",
+      "proficiency_basis": "project_hands_on",
+      "evidence_ids": [
+        "EV-DAMPERS"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "environmental_stability",
+      "name": "Polymer degradation/environmental stability testing",
+      "category": "characterization",
+      "proficiency_basis": "project_hands_on",
+      "evidence_ids": [
+        "EV-BEREZKA-PILOT"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "food_contact_compliance",
+      "name": "EU food-contact material technical documentation",
+      "category": "regulatory",
+      "proficiency_basis": "working_applied",
+      "evidence_ids": [
+        "EV-FCM"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "qc_methods",
+      "name": "Quality control methods",
+      "category": "quality",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-FCM",
+        "EV-QC"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "supplier_qualification",
+      "name": "Supplier/raw material qualification",
+      "category": "quality",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-LAB",
+        "EV-QC"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "technical_documentation",
+      "name": "SOPs, specifications and validation protocols",
+      "category": "quality",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-FCM",
+        "EV-SILICONE",
+        "EV-QC"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "basic_moldflow",
+      "name": "Basic mold-filling/manufacturability simulations",
+      "category": "software",
+      "proficiency_basis": "basic_applied",
+      "evidence_ids": [
+        "EV-MOLDFLOW",
+        "EV-ALT-MOLD"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "tooling_review",
+      "name": "Tooling/process compatibility review",
+      "category": "processing",
+      "proficiency_basis": "working_applied",
+      "evidence_ids": [
+        "EV-MOLDFLOW",
+        "EV-ALT-MOLD"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "wpc",
+      "name": "Wood-plastic composites",
+      "category": "materials",
+      "proficiency_basis": "project_hands_on",
+      "evidence_ids": [
+        "EV-CONS-FORM"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "recycled_pvc",
+      "name": "Recycled PVC compounds",
+      "category": "materials",
+      "proficiency_basis": "project_hands_on",
+      "evidence_ids": [
+        "EV-CONS-FORM"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "industrial_commissioning",
+      "name": "Compounding-line commissioning",
+      "category": "processing",
+      "proficiency_basis": "project_hands_on",
+      "evidence_ids": [
+        "EV-CONS-LINE"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "lab_setup",
+      "name": "Laboratory establishment",
+      "category": "management",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-LAB"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "technical_leadership",
+      "name": "Technical team leadership",
+      "category": "management",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-BPACKS-LAB"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "research_leadership",
+      "name": "R&D project/experimental program leadership",
+      "category": "management",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-RESEARCH-LEAD"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "experimental_design",
+      "name": "Experimental design and DoE",
+      "category": "methods",
+      "proficiency_basis": "hands_on",
+      "evidence_ids": [
+        "EV-RESEARCH-LEAD"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "functional_materials",
+      "name": "Functional composite / magnetic sorbent materials",
+      "category": "materials",
+      "proficiency_basis": "project_hands_on",
+      "evidence_ids": [
+        "EV-FUNCTIONAL-MAT"
+      ],
+      "verification_status": "draft"
+    },
+    {
+      "id": "composites_research",
+      "name": "Applied composites research",
+      "category": "materials",
+      "proficiency_basis": "research_hands_on",
+      "evidence_ids": [
+        "EV-FUNCTIONAL-MAT"
+      ],
+      "verification_status": "draft"
+    }
+  ],
+  "methods_equipment": {
+    "processing_equipment": [
+      {
+        "name": "Theysohn/Theyson twin-screw extruder",
+        "model": "TSK030, Ø30 mm, L/D 24 (model/designation review)",
+        "context": "Bpacks laboratory compounding",
+        "source_ids": [
+          "SRC-CHAT"
+        ],
+        "level": "hands_on"
+      },
+      {
+        "name": "Demag Ergotech injection molding machine",
+        "model": "110/470-310",
+        "context": "Bpacks injection molding trials",
+        "source_ids": [
+          "SRC-CHAT"
+        ],
+        "level": "hands_on"
+      },
+      {
+        "name": "Thermoforming equipment",
+        "model": null,
+        "context": "Packaging pilot processing",
+        "source_ids": [
+          "SRC-ENG-CV",
+          "SRC-RND-CV"
+        ],
+        "level": "hands_on"
+      },
+      {
+        "name": "Laboratory mixers and mills",
+        "model": null,
+        "context": "Polymer compound and filler formulation",
+        "source_ids": [
+          "SRC-CHAT"
+        ],
+        "level": "hands_on"
+      },
+      {
+        "name": "Silicone insulator molding/overmolding machinery",
+        "model": "Dekuma (reported in project discussion)",
+        "context": "Silicone insulators",
+        "source_ids": [
+          "SRC-CHAT"
+        ],
+        "level": "project_exposure"
+      }
+    ],
+    "analytical_methods": [
+      {
+        "name": "Rotational and dynamic rheometry",
+        "level": "hands_on"
+      },
+      {
+        "name": "Tensile and other mechanical testing",
+        "level": "hands_on"
+      },
+      {
+        "name": "FTIR spectroscopy",
+        "level": "hands_on"
+      },
+      {
+        "name": "AFM / scanning probe microscopy",
+        "level": "hands_on"
+      },
+      {
+        "name": "Optical microscopy and interferometry",
+        "level": "hands_on"
+      },
+      {
+        "name": "DSC and DMA",
+        "level": "reported_in_cv"
+      },
+      {
+        "name": "OTR and WVTR testing",
+        "level": "reported_in_cv"
+      },
+      {
+        "name": "SEM and Raman spectroscopy",
+        "level": "reported_in_cv; confirm hands-on depth"
+      }
+    ],
+    "software": [
+      {
+        "name": "OriginPro",
+        "level": "practiced"
+      },
+      {
+        "name": "Microsoft Excel",
+        "level": "advanced"
+      },
+      {
+        "name": "R / statistical scripting",
+        "level": "reported_in_cv"
+      },
+      {
+        "name": "Autodesk Fusion 360",
+        "level": "working"
+      },
+      {
+        "name": "SolidWorks Plastics",
+        "level": "basic_applied"
+      },
+      {
+        "name": "Altair Inspire Mold",
+        "level": "basic_applied"
+      },
+      {
+        "name": "MATLAB",
+        "level": "basic"
+      },
+      {
+        "name": "COMSOL",
+        "level": "basic"
+      }
+    ]
+  },
+  "standards_and_compliance": [
+    {
+      "code": "EU 10/2011",
+      "scope": "Plastics intended for food contact",
+      "depth": "applied supporting material/regulatory documentation; not a formal regulatory legal specialist",
+      "evidence_ids": [
+        "EV-FCM"
+      ]
+    },
+    {
+      "code": "EC 1935/2004",
+      "scope": "Food-contact materials framework",
+      "depth": "applied supporting documentation",
+      "evidence_ids": [
+        "EV-FCM"
+      ]
+    },
+    {
+      "code": "EC 2023/2006",
+      "scope": "Good manufacturing practice for food-contact materials",
+      "depth": "working familiarity; review",
+      "evidence_ids": [
+        "EV-FCM"
+      ]
+    },
+    {
+      "code": "PPWR",
+      "scope": "EU packaging regulation",
+      "depth": "working awareness; not claimed expert",
+      "evidence_ids": [
+        "EV-FCM"
+      ]
+    }
+  ],
+  "methodologies": [
+    "Design of Experiments (DoE)",
+    "ANOVA",
+    "Full/fractional factorial design",
+    "Box-Behnken design (reported in CV)",
+    "Root-cause analysis",
+    "Process-window development",
+    "Supplier/raw-material qualification",
+    "SOPs and validation protocols",
+    "Pilot trials",
+    "First-article qualification",
+    "Technology transfer"
+  ],
+  "teaching_and_leadership": [
+    {
+      "activity": "Delivered courses in Rheology of Polymer Composites, Introduction to Polymer Materials Science and Atomic Force Microscopy",
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "activity": "Supervised/mentored 6 MSc students",
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "activity": "Appointed chair of an MSc graduation examination committee (2022)",
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ]
+    },
+    {
+      "activity": "Led 4-person R&D team at Bpacks",
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-RND-CV"
+      ]
+    }
+  ],
+  "research_publications": {
+    "minimum_claim": "15+ peer-reviewed research publications (CV claim; exact total to verify)",
+    "examples": [
+      {
+        "year": 2020,
+        "title": "Electrorheological behavior of suspensions of polyimide based on the sodium salt of 2,5-diaminobenzenesulfonic acid",
+        "doi": "10.3390/polym12051015"
+      },
+      {
+        "year": 2020,
+        "title": "Generalized Einstein's and Brinkman's solutions for the effective viscosity of nanofluids",
+        "doi": "10.1063/5.0014288"
+      },
+      {
+        "year": 2021,
+        "title": "Creating a new elastomeric material with a polyimide filler and studying its viscoelastic properties under applied external electric fields and dynamic loads",
+        "doi": "10.1007/s11029-021-09927-4"
+      },
+      {
+        "year": 2023,
+        "title": "Photoelectrorheological properties of polyimides with sulfo-acid and sodium salt sulfo-acid groups: a comparative study",
+        "doi": "10.1140/epjp/s13360-023-04383-6"
+      }
+    ],
+    "source_ids": [
+      "SRC-RND-CV"
+    ]
+  },
+  "knowledge_without_verified_hands_on": [
+    {
+      "topic": "UV-curable acrylate, urethane-acrylate, thiol-acrylate chemistry",
+      "status": "theoretical_study_discussed; direct formulation/photopolymerization experience unconfirmed",
+      "source_ids": [
+        "SRC-CHAT"
+      ]
+    },
+    {
+      "topic": "Photoinitiator selection, photo-DSC and photorheology",
+      "status": "theoretical_study_discussed; hands-on not established",
+      "source_ids": [
+        "SRC-CHAT"
+      ]
+    },
+    {
+      "topic": "Deep polymer synthesis / synthetic organic chemistry",
+      "status": "scope not established; do not claim independent synthesis expertise",
+      "source_ids": [
+        "SRC-CHAT"
+      ]
+    },
+    {
+      "topic": "Advanced moldflow / CAE simulation",
+      "status": "basic tool application supported, advanced modeling capability not established",
+      "source_ids": [
+        "SRC-ENG-CV",
+        "SRC-CHAT"
+      ]
+    }
+  ],
+  "review_queue": [
+    {
+      "field": "experience.EXP-BPACKS.end",
+      "question": "Confirm May 2026 as formal end date of employment (company closure may have started earlier)."
+    },
+    {
+      "field": "projects.PRJ-BPACKS-MATERIAL.results",
+      "question": "Reconcile berry shelf-life improvement reported as +7 days in CV vs earlier discussion of 9→13 days (+4). Mushroom +4 days appears in engineering CV."
+    },
+    {
+      "field": "experience.EXP-IAM.program_count",
+      "question": "Engineering CV: 6+ joint programs; research CV: 10+. Confirm definition and defensible number."
+    },
+    {
+      "field": "research_publications.minimum_claim",
+      "question": "Confirm number of peer-reviewed papers; older CV versions contain different counts."
+    },
+    {
+      "field": "career_preferences",
+      "question": "Review visa sponsorship requirements, relocation lead time and salary threshold before matching future jobs."
+    },
+    {
+      "field": "methods_equipment",
+      "question": "Confirm hands-on proficiency for SEM, Raman, DSC/DMA, OTR/WVTR and named machines."
+    },
+    {
+      "field": "projects",
+      "question": "Remove confidential project/formulation details before using cloud LLM providers."
+    }
+  ]
+}

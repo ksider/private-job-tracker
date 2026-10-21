@@ -25,7 +25,7 @@ export const SnapshotSchema = z.object({
   metadata: z.object({ collector_version: z.string().max(40) }).passthrough().default({ collector_version: 'unknown' })
 });
 export type PageSnapshot = z.infer<typeof SnapshotSchema>;
-const JobTextField = z.string().trim().max(500).transform(value => value || null).optional();
+const JobTextField = z.string().trim().max(500).transform(value => value || null).nullable().optional();
 export const JobPatchSchema = z.object({
   title: z.string().trim().min(1).max(500).optional(),
   company: JobTextField,
