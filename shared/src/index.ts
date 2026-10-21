@@ -6,6 +6,9 @@ export const JobStatusSchema = z.enum(JOB_STATUSES);
 export const JOB_EVENT_TYPES = ['saved', 'applied', 'hr_screening', 'interview', 'follow_up', 'result'] as const;
 export type JobEventType = (typeof JOB_EVENT_TYPES)[number];
 export const JobEventTypeSchema = z.enum(JOB_EVENT_TYPES);
+export const INTERVIEW_STAGES = ['hr_screening', 'interview', 'follow_up'] as const;
+export type InterviewStage = (typeof INTERVIEW_STAGES)[number];
+export const InterviewStageSchema = z.enum(INTERVIEW_STAGES);
 
 export const SnapshotSchema = z.object({
   schema_version: z.literal(1),
@@ -22,9 +25,18 @@ export const SnapshotSchema = z.object({
   metadata: z.object({ collector_version: z.string().max(40) }).passthrough().default({ collector_version: 'unknown' })
 });
 export type PageSnapshot = z.infer<typeof SnapshotSchema>;
+const JobTextField = z.string().trim().max(500).transform(value => value || null).optional();
 export const JobPatchSchema = z.object({
-  status: JobStatusSchema.optional(), notes: z.string().max(20_000).optional()
-}).refine(value => value.status !== undefined || value.notes !== undefined, 'At least one field is required');
+  title: z.string().trim().min(1).max(500).optional(),
+  company: JobTextField,
+  location: JobTextField,
+  employment_type: JobTextField,
+  workplace_type: JobTextField,
+  source_url: z.string().url().max(4096).optional(),
+  status: JobStatusSchema.optional(),
+  interview_stage: InterviewStageSchema.optional(),
+  notes: z.string().max(20_000).optional()
+}).refine(value => Object.values(value).some(value => value !== undefined), 'At least one field is required');
 export type JobPatch = z.infer<typeof JobPatchSchema>;
 export const JobEventCreateSchema = z.object({
   type: JobEventTypeSchema,

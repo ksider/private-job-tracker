@@ -5,6 +5,11 @@
 /* There is no web session in LAN-only mode. */
 #logout { display: none; }
 
+/* Use the available desktop space for work-heavy dialogs without breaking mobile gutters. */
+#job-edit-dialog { width: min(820px, calc(100% - 2rem)); }
+#ai-provider-dialog { width: min(920px, calc(100% - 2rem)); }
+#match-dialog { width: min(980px, calc(100% - 2rem)); }
+
 /* Four columns fit on desktop; scrolling here wastes space and adds a phantom scrollbar. */
 @media (min-width: 1024px) {
   #board-view { overflow: visible; padding-bottom: 0; }
