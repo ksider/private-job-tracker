@@ -20,7 +20,7 @@ npm run build
 
 In Chrome, open `chrome://extensions`, enable Developer Mode, choose **Load unpacked**, and select the `extension` directory. Open the extension's Settings page, enter the tracker URL and API token, grant the requested permission for that exact server, and test the connection.
 
-For a LinkedIn job view/search with a selected job, click **Save Job**. For another site, select the relevant content before clicking Save Job; the generic collector otherwise reads only `main` or `article`, never the whole body. If the tracker is unavailable, the sanitized snapshot remains in IndexedDB and can be retried later without revisiting the original site.
+For a LinkedIn job view/search or a supported Workday/SuccessFactors vacancy, click **Save Job**. The Workday collector saves the complete safe job-posting container (including the company sidebar), so improved parsers can reprocess it later. For another site, select the relevant content before clicking Save Job; the generic collector otherwise reads only `main` or `article`, never the whole body. If the tracker is unavailable, the sanitized snapshot remains in IndexedDB and can be retried later without revisiting the original site.
 
 ## Development and verification
 
@@ -37,7 +37,7 @@ Tests cover fixture parsing, import deduplication, preservation of status/notes,
 - `POST /api/snapshots/import` requires an extension bearer token. The web tracker has no login: any device that reaches the LAN service can view and edit jobs.
 - Raw HTML is sanitized at the extension and again at the backend. The UI receives only the safe backend rendering form.
 - The parser registry consists of pure local HTML parsers. There is no fetch, headless browser, or source-site client in the server.
-- Snapshots and normalized jobs are separated in SQLite. Reparse reads the latest stored snapshot and preserves a job's status and notes.
+- Sanitized snapshots and normalized jobs are separated in the same SQLite database. Reparse reads the latest stored snapshot and preserves a job's status and notes; backups therefore remain atomic and do not require a separate snapshot directory.
 
 The app has no cloud services, telemetry, third-party APIs, Redis, or PostgreSQL requirement.
 
