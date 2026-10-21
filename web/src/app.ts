@@ -1,8 +1,8 @@
 import './compact-menu.js';
 
 type Status = 'saved' | 'sent' | 'interview' | 'result' | 'archived';
-type EventType = 'saved' | 'applied' | 'hr_screening' | 'interview' | 'follow_up' | 'result';
-type InterviewStage = 'hr_screening' | 'interview' | 'follow_up';
+type EventType = 'saved' | 'applied' | 'hr_screening' | 'interview' | 'final_interview' | 'follow_up' | 'result';
+type InterviewStage = 'hr_screening' | 'interview' | 'final_interview' | 'follow_up';
 type JobEvent = { id: string; job_id: string; type: EventType; occurred_at: string; note: string; created_at: string };
 type MatchClassification = 'strong' | 'potential' | 'weak' | 'insufficient_data';
 type AiMatch = { id: string; classification: MatchClassification; result: { summary: string; requirements: Array<{ status: string; requirement: string; importance: string; evidenceIds: string[]; explanation: string }>; eligibility: Array<{ criterion: string; status: string; explanation: string }>; strengths: string[]; gaps: string[]; recommendations: string[] }; status: string; model: string; completed_at: string; outdated: boolean };
@@ -12,8 +12,8 @@ type ProfileSummary = { configured: true; source: 'uploaded' | 'file'; profile_i
 type Job = { id: string; title: string | null; company: string | null; location: string | null; source: string; source_url: string; status: Status; interview_stage: InterviewStage | null; notes: string; employment_type: string | null; workplace_type: string | null; description_html: string | null; created_at: string; captured_at: string; parse_status: string; last_event_at: string; events?: JobEvent[]; ai_match?: AiMatch | null };
 const stages: Array<{ status: Exclude<Status, 'archived'>; label: string; next?: Status; nextLabel?: string }> = [{ status: 'saved', label: 'Сохранено', next: 'sent', nextLabel: 'Отправил' }, { status: 'sent', label: 'Отправлено', next: 'interview', nextLabel: 'Интервью' }, { status: 'interview', label: 'Интервью', next: 'result', nextLabel: 'В результат' }, { status: 'result', label: 'Результат' }];
 const statusLabels: Record<Status, string> = { saved: 'Сохранено', sent: 'Отправлено', interview: 'Интервью', result: 'Результат', archived: 'Архив' };
-const eventLabels: Record<EventType, string> = { saved: 'Сохранено', applied: 'Отклик отправлен', hr_screening: 'HR screening', interview: 'Интервью', follow_up: 'Follow-up', result: 'Результат' };
-const interviewStages: Array<{ stage: InterviewStage; label: string }> = [{ stage: 'hr_screening', label: 'HR screening' }, { stage: 'interview', label: 'Интервью' }, { stage: 'follow_up', label: 'Follow-up' }];
+const eventLabels: Record<EventType, string> = { saved: 'Сохранено', applied: 'Отклик отправлен', hr_screening: 'HR screening', interview: 'Technical interview', final_interview: 'Final interview', follow_up: 'Follow-up', result: 'Результат' };
+const interviewStages: Array<{ stage: InterviewStage; label: string }> = [{ stage: 'hr_screening', label: 'HR screening' }, { stage: 'interview', label: 'Technical interview' }, { stage: 'final_interview', label: 'Final interview' }, { stage: 'follow_up', label: 'Follow-up' }];
 const stageColors: Record<Exclude<Status, 'archived'>, { column: string; heading: string; count: string; empty: string }> = {
   saved: { column: 'border-slate-200 bg-slate-100', heading: 'text-slate-700', count: 'bg-slate-200 text-slate-700', empty: 'border-slate-300 text-slate-500' },
   sent: { column: 'border-blue-200 bg-blue-50', heading: 'text-blue-800', count: 'bg-blue-200 text-blue-800', empty: 'border-blue-200 text-blue-700' },
@@ -72,8 +72,9 @@ function renderDetailStageTrail(job: Job) {
     const color = index === currentIndex ? currentColors[stage.status] : index < currentIndex ? completedColors[stage.status] : 'text-gray-400';
     const interviewSubstages = stage.status !== 'interview' ? '' : `<span class="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1 border-l border-violet-200 pl-2 text-xs">${interviewStages.map((substage, substageIndex) => {
       const substageColor = index < currentIndex ? 'text-violet-400' : index > currentIndex ? 'text-gray-400' : job.interview_stage === substage.stage ? 'bg-violet-700 text-white' : interviewStages.findIndex(item => item.stage === job.interview_stage) > substageIndex ? 'text-violet-400' : 'text-gray-400';
-      return `<button type="button" data-interview-stage="${substage.stage}" class="rounded px-1.5 py-0.5 font-medium ${substageColor} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">${substage.label}</button>`;
-    }).join('<span class="text-gray-300" aria-hidden="true">·</span>')}</span>`;
+      const separator = substageIndex ? `<span class="text-gray-300" aria-hidden="true">${substage.stage === 'follow_up' ? '|' : '→'}</span>` : '';
+      return `${separator}<button type="button" data-interview-stage="${substage.stage}" class="rounded px-1.5 py-0.5 font-medium ${substageColor} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">${substage.label}</button>`;
+    }).join('')}</span>`;
     return `${index ? '<span class="text-gray-300" aria-hidden="true">→</span>' : ''}<span class="inline-flex items-center gap-2"><button type="button" data-detail-stage="${stage.status}" class="p-0 font-medium ${color} hover:underline focus:outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-blue-500">${stage.label}</button>${interviewSubstages}</span>`;
   }).join('');
   document.querySelectorAll<HTMLButtonElement>('[data-detail-stage]').forEach(button => {
