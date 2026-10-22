@@ -1,48 +1,163 @@
-# Self-Hosted Job Tracker
+# Job Tracker
 
-Private LAN-only job tracker with a Manifest V3 browser collector. The extension captures a **read-only snapshot only after you press Save Job**; it never clicks, scrolls, observes page changes, reads cookies, or contacts the source SaaS. The only request it makes while saving is to the backend URL you configure.
+Локальный трекер вакансий с браузерным расширением-коллектором. Предназначен для личного использования в локальной сети: вакансии сохраняются в SQLite на своём сервере, а расширение захватывает страницу только по явному нажатию **Save Job**.
 
-## Run with Docker
+## Что умеет
 
-1. For local Docker Compose, copy `.env.example` to `.env` and set a strong `API_TOKEN` value. For a Git-based Portainer stack, set `API_TOKEN` and `AI_SECRETS_KEY` in Portainer's **Environment variables** instead; `.env` is intentionally not stored in Git.
-2. Keep `BIND_IP=127.0.0.1` for host-only access. To permit LAN access, explicitly set it to the Docker host's LAN IP, such as `192.168.1.100`.
-3. Run `docker compose up -d --build`.
-4. Open `http://<server-ip>:3000`.
+- Сохранять вакансии из LinkedIn, SuccessFactors, Workday и других сайтов.
+- Хранить исходный безопасный DOM-снапшот вместе с разобранными полями. После обновления парсера вакансию можно переразобрать без повторного посещения сайта.
+- Показывать вакансии таблицей, канбан-доской или архивом.
+- Перетаскивать карточки между этапами: «Сохранено», «Отправлено», «Интервью», «Результат».
+- Вести таймлайн откликов и интервью: `Applied`, `HR screening`, `Technical interview`, `Final interview`, `Follow-up`.
+- Сворачивать этапы канбана; оставшиеся колонки расширяются. Есть отдельный компактный вид карточек.
+- Фильтровать, сортировать и группировать вакансии по тегу, компании, локации, источнику и месяцу добавления. Настройка представления хранится в URL и браузере.
+- Создавать теги вручную или предложить до пяти тегов через AI.
+- Показывать в настройках столбчатую статистику подач по дням: день, неделя, месяц или всё время от первой подачи.
+- Подключать AI-провайдеры для сопоставления вакансии с профилем кандидата и для предложений тегов.
 
-HTTP on a trusted LAN is supported, but it exposes the API token and captured job data to the network. Use HTTPS and set `COOKIE_SECURE=true` when you later place it behind a trusted LAN TLS proxy. The service is never exposed publicly by default.
+## Архитектура
 
-## Install the extension
+| Часть | Назначение |
+| --- | --- |
+| `server/` | Fastify API, SQLite, парсеры, хранение снапшотов и AI-интеграция |
+| `web/` | Интерфейс трекера: `/`, `/jobs/:id`, `/settings` |
+| `extension/` | Chrome/Chromium Manifest V3-расширение для ручного сохранения вакансий |
+| `shared/` | Общие схемы и типы |
+
+Снапшоты, вакансии, события, теги, AI-настройки и загруженный профиль хранятся в SQLite. Отдельное облако, Redis или PostgreSQL не требуются.
+
+## Быстрый запуск через Docker Compose
+
+1. Скопируйте `.env.example` в `.env` и задайте два случайных длинных значения:
+
+   ```dotenv
+   API_TOKEN=replace-with-a-long-random-token
+   AI_SECRETS_KEY=replace-with-another-long-random-secret
+   ```
+
+   `API_TOKEN` нужен расширению для импорта снапшотов. `AI_SECRETS_KEY` шифрует ключи AI-провайдеров в SQLite. Если не задать второй ключ, для шифрования будет использован `API_TOKEN`.
+
+2. Настройте адрес публикации в `.env`:
+
+   ```dotenv
+   # Только на самом сервере
+   BIND_IP=127.0.0.1
+
+   # Или конкретный LAN-адрес хоста, например 192.168.1.100
+   # BIND_IP=192.168.1.100
+   PORT=3000
+   ```
+
+3. Запустите сервис:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+4. Откройте `http://<IP-сервера>:3000`.
+
+Данные сохраняются в именованном Docker volume `job-tracker-data`. Обновление образа не удаляет базу.
+
+### Установка через Portainer из Git-репозитория
+
+В Git-стеке файла `.env` обычно нет. В Portainer откройте **Stack → Environment variables** и задайте как минимум:
+
+```text
+API_TOKEN=<длинный случайный токен>
+AI_SECRETS_KEY=<другой длинный случайный ключ>
+BIND_IP=<LAN IP сервера или 127.0.0.1>
+PORT=3000
+```
+
+Если Docker сообщает, что порт уже занят, измените `PORT` на свободный, например `3006`, и используйте этот порт в адресе сайта и настройках расширения.
+
+## Локальная разработка
+
+Нужен Node.js 20+ и npm.
 
 ```bash
 npm install
+cp .env.example .env
 npm run build
+npm run dev
 ```
 
-In Chrome, open `chrome://extensions`, enable Developer Mode, choose **Load unpacked**, and select the `extension` directory. Open the extension's Settings page, enter the tracker URL and API token, grant the requested permission for that exact server, and test the connection.
+Для запуска без `.env`:
 
-For a LinkedIn job view/search or a supported Workday/SuccessFactors vacancy, click **Save Job**. The Workday collector saves the complete safe job-posting container (including the company sidebar), so improved parsers can reprocess it later. For another site, select the relevant content before clicking Save Job; the generic collector otherwise reads only `main` or `article`, never the whole body. If the tracker is unavailable, the sanitized snapshot remains in IndexedDB and can be retried later without revisiting the original site.
+```bash
+API_TOKEN=dev-token npm run dev
+```
 
-## Development and verification
+По умолчанию база создаётся в `./data/jobs.db`; директория будет создана при запуске.
+
+Проверки:
 
 ```bash
 npm test
 npm run build
-API_TOKEN=dev-token npm run dev
 ```
 
-Tests cover fixture parsing, import deduplication, preservation of status/notes, backend HTML sanitization, bearer authorization, and static browser read-only constraints. Tests run only against local fixtures and never against LinkedIn.
+## Установка расширения
 
-## Security model
+1. Соберите проект: `npm run build`.
+2. В Chrome/Chromium откройте `chrome://extensions`.
+3. Включите **Developer mode**.
+4. Нажмите **Load unpacked** и выберите папку `extension/`.
+5. Откройте настройки расширения, укажите адрес сервера, например `http://192.168.1.100:3000`, и тот же `API_TOKEN`.
+6. Нажмите проверку соединения. Chrome запросит разрешение только для указанного адреса сервера.
 
-- `POST /api/snapshots/import` requires an extension bearer token. The web tracker has no login: any device that reaches the LAN service can view and edit jobs.
-- Raw HTML is sanitized at the extension and again at the backend. The UI receives only the safe backend rendering form.
-- The parser registry consists of pure local HTML parsers. There is no fetch, headless browser, or source-site client in the server.
-- Sanitized snapshots and normalized jobs are separated in the same SQLite database. Reparse reads the latest stored snapshot and preserves a job's status and notes; backups therefore remain atomic and do not require a separate snapshot directory.
+На странице вакансии нажмите иконку расширения и **Save Job**. Для LinkedIn, SuccessFactors и Workday расширение выбирает специализированный контейнер. На другом сайте предварительно выделите блок вакансии: generic-коллектор возьмёт выделение; если его нет — `main` или `article`, но никогда весь `body`.
 
-The app has no cloud services, telemetry, third-party APIs, Redis, or PostgreSQL requirement.
+Если сервер временно недоступен, безопасный снапшот остаётся в IndexedDB расширения и его можно отправить повторно без возвращения на сайт вакансии.
 
-## AI matching
+## Работа с интерфейсом
 
-The tracker can optionally send a saved vacancy description and the local candidate profile from `.ai/` to an AI provider selected in **AI Providers**. `AI_SECRETS_KEY` is used by the backend to encrypt provider keys in SQLite; if it is omitted, the existing `API_TOKEN` is used as the encryption key. The browser never receives saved keys and the extension never calls an AI API.
+### Канбан
 
-Matching is manual. The first analysis for each provider asks for confirmation before the profile is sent. Results are evidence-checked against the saved vacancy text and existing profile evidence IDs; the final category is calculated locally. For Docker, `.ai/` is mounted read-only at `/app/.ai`. You can also upload a profile JSON in **AI Providers**; it is validated and stored locally in the persistent `/data` volume, never in Git, and takes priority over the file from `.ai/`.
+- Перетащите карточку в другую колонку, чтобы сменить этап.
+- Кнопка у заголовка колонки сворачивает этап в узкую вертикальную полосу с количеством вакансий. Повторный клик разворачивает его.
+- Иконка плотности карточек в панели доски включает компактный вид. В нём остаются позиция, компания, локация, AI-индикатор и предупреждение об ожидании; подробности открываются кликом по карточке.
+- В меню **Группировать** создаются несколько независимых досок — например, по тегу или локации. Без группировки остаётся одна доска по этапам.
+
+### Карточка вакансии
+
+Карточка открывается без перезагрузки. В ней можно:
+
+- исправить название, компанию, локацию, тип занятости и ссылку;
+- менять этап и подэтап интервью;
+- вести заметки и таймлайн;
+- добавлять и удалять теги;
+- запускать AI Match;
+- переразобрать сохранённый DOM-снапшот после улучшения парсера.
+
+Жёлтая индикация появляется после 14 дней без события, красная — после 35 дней.
+
+### Настройки
+
+На `/settings` находятся:
+
+- статистика отправленных заявок по дням;
+- реестр тегов и их цвета;
+- JSON-профиль кандидата;
+- список AI-подключений и модель по умолчанию.
+
+## AI: профиль и провайдеры
+
+AI-функции необязательны. В настройках можно создать подключение к Mistral, OpenAI, Google Gemini, Ollama или OpenAI-compatible API, указав URL, модель, ключ, таймаут и лимит output tokens.
+
+Профиль кандидата можно загрузить JSON-файлом в настройках. Для Docker также поддерживается файл из `.ai/`, смонтированный в контейнер только для чтения. Загруженный профиль хранится в persistent volume и имеет приоритет над файлом.
+
+При первом AI Match для каждого провайдера интерфейс попросит подтвердить передачу профиля. В AI отправляются только текст вакансии и профиль; браузерное расширение не обращается к AI-сервисам и не получает ключи провайдеров.
+
+## Приватность и безопасность
+
+- Расширение ничего не собирает в фоне: не скроллит страницу, не нажимает элементы, не читает cookies, токены или локальное хранилище сайта.
+- Снапшот берётся только после явного нажатия **Save Job**.
+- HTML очищается в расширении и повторно на сервере. В интерфейс выдаётся только безопасная версия описания.
+- Сервер не делает запросов к карьерным сайтам и не использует headless-браузер.
+- Веб-интерфейс намеренно открыт для устройств, имеющих доступ к вашему LAN-серверу. Поэтому не публикуйте порт в интернет; для удалённого доступа используйте HTTPS и отдельный reverse proxy/VPN.
+- Bearer-токен защищает импорт расширения. Храните его как секрет и не добавляйте `.env` в Git.
+
+## Резервная копия
+
+Для Docker достаточно регулярно делать backup именованного volume `job-tracker-data`. Для локального запуска сохраните файл `data/jobs.db` при остановленном приложении. В нём находятся и вакансии, и DOM-снапшоты, и события, и AI-конфигурация.
