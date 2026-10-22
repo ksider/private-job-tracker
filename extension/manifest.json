@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "LAN Job Tracker Collector",
+  "name": "Job Bookmark",
   "version": "1.0.0",
-  "description": "Explicit, read-only DOM snapshots sent only to your self-hosted Job Tracker.",
+  "description": "Manually save a page to your personal bookmark server.",
   "permissions": ["activeTab", "scripting", "storage"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "icons": {
