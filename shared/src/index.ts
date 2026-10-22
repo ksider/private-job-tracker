@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const JOB_STATUSES = ['saved', 'sent', 'interview', 'result', 'archived'] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
 export const JobStatusSchema = z.enum(JOB_STATUSES);
-export const JOB_EVENT_TYPES = ['saved', 'applied', 'hr_screening', 'interview', 'final_interview', 'follow_up', 'result'] as const;
+export const JOB_EVENT_TYPES = ['saved', 'applied', 'hr_screening', 'interview', 'final_interview', 'follow_up', 'result', 'email_detected', 'rejection_received', 'email_status_changed'] as const;
 export type JobEventType = (typeof JOB_EVENT_TYPES)[number];
 export const JobEventTypeSchema = z.enum(JOB_EVENT_TYPES);
 export const INTERVIEW_STAGES = ['hr_screening', 'interview', 'final_interview', 'follow_up'] as const;
@@ -32,6 +32,8 @@ export const JobPatchSchema = z.object({
   location: JobTextField,
   employment_type: JobTextField,
   workplace_type: JobTextField,
+  application_id: JobTextField,
+  result_outcome: z.enum(['rejected', 'offer', 'withdrawn', 'other']).nullable().optional(),
   source_url: z.string().url().max(4096).optional(),
   status: JobStatusSchema.optional(),
   interview_stage: InterviewStageSchema.optional(),

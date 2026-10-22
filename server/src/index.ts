@@ -8,3 +8,4 @@ const databasePath = process.env.DATABASE_PATH ?? './data/jobs.db';
 if (databasePath !== ':memory:') await mkdir(path.dirname(databasePath), { recursive: true });
 const app = buildApp({ databasePath, apiToken, aiSecretsKey: process.env.AI_SECRETS_KEY, profilePath: process.env.CANDIDATE_PROFILE_PATH });
 await app.listen({ port, host });
+app.emailScheduler.start();
