@@ -20,7 +20,7 @@ export class ProfileLoader {
   }
   private parse(raw: string): LoadedProfile {
     const profile = ProfileSchema.parse(JSON.parse(raw));
-    const compact = { profile_id: profile.profile_id, summary: profile.summary, identity: profile.identity, career_preferences: profile.career_preferences, education: profile.education, experience: profile.experience, projects: profile.projects, skills: profile.skills, methods_equipment: profile.methods_equipment, standards_and_compliance: profile.standards_and_compliance, evidence: profile.evidence.map(item => ({ id: item.id, statement: item.statement, verification_status: item.verification_status, skill_ids: item.skill_ids })) };
+    const compact = { profile_id: profile.profile_id, summary: profile.summary, identity: profile.identity, career_preferences: profile.career_preferences, education: profile.education, experience: profile.experience, projects: profile.projects, skills: profile.skills, methods_equipment: profile.methods_equipment, standards_and_compliance: profile.standards_and_compliance, evidence: profile.evidence.map(item => ({ statement: item.statement, verification_status: item.verification_status, skill_ids: item.skill_ids })) };
     return { profile, hash: createHash('sha256').update(raw).digest('hex'), compact, evidenceIds: new Set(profile.evidence.map(item => item.id)) };
   }
   async load(): Promise<LoadedProfile> {

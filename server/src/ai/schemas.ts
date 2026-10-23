@@ -9,8 +9,23 @@ export const MatchRequestSchema = z.object({ connection_id: z.string().uuid().op
 export const TagSuggestionsRequestSchema = z.object({ connection_id: z.string().uuid().optional(), model: z.string().trim().max(200).optional() });
 export const TagSuggestionsResultSchema = z.object({ tag_ids: z.array(z.string().uuid()).max(20).default([]), new_tags: z.array(z.string().trim().min(1).max(60)).max(20).default([]) });
 
-const RequirementSchema = z.object({ requirement: z.string().min(1).max(600), job_quote: z.string().min(1).max(600), importance: z.enum(['required', 'preferred', 'unspecified']), status: z.enum(['confirmed', 'partial', 'not_evidenced', 'contradicted', 'not_applicable']), evidenceIds: z.array(z.string().min(1)).max(20), explanation: z.string().min(1).max(1200) });
-export const MatchMatrixSchema = z.object({ summary: z.string().min(1).max(2000), requirements: z.array(RequirementSchema).min(1).max(40), eligibility: z.array(z.object({ criterion: z.string().min(1).max(500), status: z.enum(['compatible', 'incompatible', 'unknown']), explanation: z.string().min(1).max(1000) })).max(20), strengths: z.array(z.string().max(500)).max(15), gaps: z.array(z.string().max(500)).max(15), recommendations: z.array(z.string().max(500)).max(15) });
-export type MatchMatrix = z.infer<typeof MatchMatrixSchema>;
 export type MatchClassification = 'strong' | 'potential' | 'weak' | 'insufficient_data';
-export type MatchResult = MatchMatrix & { classification: MatchClassification };
+const MatchClassificationSchema = z.enum(['strong', 'potential', 'weak', 'insufficient_data']);
+const MatchTextSchema = z.string().trim().max(2_000).catch('');
+const MatchListSchema = z.array(z.string().trim().min(1).max(600)).max(8).catch([]);
+
+/**
+ * This is intentionally a compact opinion, not an evidence-audit protocol.
+ * The classification remains constrained because the UI uses it for the
+ * visible match state; narrative fields may be omitted by a weaker model.
+ */
+export const MatchMatrixSchema = z.object({
+  classification: MatchClassificationSchema,
+  vacancy_summary: MatchTextSchema,
+  fit_summary: MatchTextSchema,
+  fit_reasons: MatchListSchema,
+  concerns: MatchListSchema,
+  recommendations: MatchListSchema,
+});
+export type MatchMatrix = z.infer<typeof MatchMatrixSchema>;
+export type MatchResult = MatchMatrix;
