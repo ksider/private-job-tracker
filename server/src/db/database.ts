@@ -13,6 +13,7 @@ export type AiAnalysisRow = { id: string; job_id: string; provider_connection_id
 export type ImapSettingsRow = { host: string; port: number; tls_mode: 'tls' | 'starttls'; username: string; encrypted_password: string; mailbox: string; enabled: number; sync_interval_minutes: number; initial_sync_days: number; rejection_handling: 'manual_review' | 'auto_exact' | 'notifications_only'; ai_consent_at: string | null; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; processed_count: number; rejection_count: number; review_count: number; updated_at: string };
 export type EmailRecordRow = { id: string; uid_validity: string; imap_uid: number; received_at: string; body_text: string; body_hash: string; category: string | null; classification_json: string | null; proposed_job_id: string | null; match_status: 'exact' | 'probable' | 'no_match' | null; review_status: 'pending_review' | 'applied' | 'ignored' | 'reverted'; unresolved_reason: string | null; initial_import: number; created_at: string; updated_at: string; job_title?: string | null; job_company?: string | null };
 export type EmailLogRow = Omit<EmailRecordRow, 'body_text' | 'body_hash' | 'classification_json'>;
+export type BackupSettingsRow = { webhook_url: string; encrypted_webhook_secret: string; automatic_enabled: number; interval_hours: number; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; updated_at: string };
 
 export class JobDatabase {
   readonly db: Database.Database;
@@ -86,7 +87,11 @@ export class JobDatabase {
       CREATE TABLE IF NOT EXISTS email_effects (
         id TEXT PRIMARY KEY, email_id TEXT NOT NULL REFERENCES email_records(id) ON DELETE CASCADE, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
         previous_status TEXT NOT NULL, previous_result_outcome TEXT, next_status TEXT NOT NULL, next_result_outcome TEXT, automatic INTEGER NOT NULL, applied_at TEXT NOT NULL, reverted_at TEXT,
-        UNIQUE(email_id, job_id));`);
+        UNIQUE(email_id, job_id));
+      CREATE TABLE IF NOT EXISTS backup_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1), webhook_url TEXT NOT NULL DEFAULT '', encrypted_webhook_secret TEXT NOT NULL DEFAULT '', automatic_enabled INTEGER NOT NULL DEFAULT 0,
+        interval_hours INTEGER NOT NULL DEFAULT 24, last_sync_at TEXT, last_sync_status TEXT, last_error TEXT, updated_at TEXT NOT NULL DEFAULT '');
+      INSERT OR IGNORE INTO backup_settings (id, updated_at) VALUES (1, '');`);
     this.db.exec("UPDATE jobs SET status='archived', archive_reason=CASE WHEN EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id AND email_effects.automatic=1) THEN 'email_exact' ELSE 'email_review' END, archive_seen_at=updated_at WHERE status='result' AND result_outcome='rejected' AND EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id)");
   }
   import(parsed: ParsedJob, raw: { html: string; text: string | null; collectorVersion: string; capturedAt: string }) {
@@ -250,4 +255,19 @@ export class JobDatabase {
     if (!effect) return undefined; const job = this.get(effect.job_id); if (!job || job.status !== effect.next_status || job.result_outcome !== effect.next_result_outcome) throw new Error('The vacancy changed after this email action and cannot be reverted automatically.');
     const now = new Date().toISOString(); const transaction = this.db.transaction(() => { this.db.prepare('UPDATE jobs SET status=?, result_outcome=?, archive_reason=NULL, archive_seen_at=NULL, updated_at=? WHERE id=?').run(effect.previous_status, effect.previous_result_outcome, now, job.id); this.db.prepare('UPDATE email_effects SET reverted_at=? WHERE email_id=? AND reverted_at IS NULL').run(now, id); this.db.prepare("UPDATE email_records SET review_status='reverted', updated_at=? WHERE id=?").run(now, id); this.insertEvent(job.id, 'email_status_changed', now, 'Email update reverted'); }); transaction(); return this.email(id);
   }
+  backupSettings() { return this.db.prepare('SELECT * FROM backup_settings WHERE id=1').get() as BackupSettingsRow; }
+  saveBackupSettings(input: Partial<Pick<BackupSettingsRow, 'webhook_url' | 'encrypted_webhook_secret' | 'automatic_enabled' | 'interval_hours'>>) { const old = this.backupSettings(); const now = new Date().toISOString(); this.db.prepare('UPDATE backup_settings SET webhook_url=?, encrypted_webhook_secret=?, automatic_enabled=?, interval_hours=?, updated_at=? WHERE id=1').run(input.webhook_url ?? old.webhook_url, input.encrypted_webhook_secret ?? old.encrypted_webhook_secret, input.automatic_enabled ?? old.automatic_enabled, input.interval_hours ?? old.interval_hours, now); return this.backupSettings(); }
+  updateBackupSyncStatus(input: { status: string; error?: string | null }) { const now = new Date().toISOString(); this.db.prepare('UPDATE backup_settings SET last_sync_at=?, last_sync_status=?, last_error=? WHERE id=1').run(now, input.status, input.error?.slice(0, 500) ?? null); return this.backupSettings(); }
+  portableBackup() {
+    const select = (table: string) => this.db.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[];
+    return { schema_version: 1, exported_at: new Date().toISOString(), data: { jobs: select('jobs'), snapshots: select('snapshots'), job_events: select('job_events'), tags: select('tags'), job_tags: select('job_tags'), job_match_analyses: select('job_match_analyses'), email_records: select('email_records'), email_effects: select('email_effects'), ai_provider_connections: this.db.prepare('SELECT id, provider_type, display_name, base_url, model, max_output_tokens, timeout_ms, enabled, profile_consent_at, created_at, updated_at FROM ai_provider_connections').all(), ai_settings: select('ai_settings'), imap_settings: this.db.prepare('SELECT id, host, port, tls_mode, username, mailbox, enabled, sync_interval_minutes, initial_sync_days, rejection_handling, ai_consent_at, last_sync_at, last_sync_status, last_error, processed_count, rejection_count, review_count, updated_at FROM imap_settings').all() } };
+  }
+  sheetSyncPayload() {
+    const jobs = this.db.prepare("SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.source, jobs.source_url, jobs.status, jobs.interview_stage, jobs.application_id, jobs.result_outcome, jobs.archive_reason, jobs.captured_at, jobs.created_at, jobs.updated_at, (SELECT MAX(occurred_at) FROM job_events WHERE job_id=jobs.id) AS last_event_at, GROUP_CONCAT(tags.name, ', ') AS tags FROM jobs LEFT JOIN job_tags ON job_tags.job_id=jobs.id LEFT JOIN tags ON tags.id=job_tags.tag_id GROUP BY jobs.id ORDER BY jobs.created_at DESC").all();
+    const events = this.db.prepare('SELECT id, job_id, type, occurred_at, note, created_at FROM job_events ORDER BY occurred_at DESC').all();
+    const tags = this.db.prepare('SELECT id, name, color, created_at, updated_at FROM tags ORDER BY name COLLATE NOCASE').all();
+    const emails = this.db.prepare('SELECT id, received_at, category, proposed_job_id, match_status, review_status, unresolved_reason, initial_import, created_at, updated_at FROM email_records ORDER BY received_at DESC').all();
+    return { schema_version: 1, exported_at: new Date().toISOString(), sheets: { Jobs: jobs, Events: events, Tags: tags, Emails: emails } };
+  }
+  csvJobs() { return this.db.prepare("SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.source, jobs.source_url, jobs.status, jobs.interview_stage, jobs.result_outcome, jobs.archive_reason, jobs.created_at, jobs.updated_at, GROUP_CONCAT(tags.name, ', ') AS tags FROM jobs LEFT JOIN job_tags ON job_tags.job_id=jobs.id LEFT JOIN tags ON tags.id=job_tags.tag_id GROUP BY jobs.id ORDER BY jobs.created_at DESC").all() as Array<Record<string, string | null>>; }
 }

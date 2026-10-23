@@ -47,4 +47,10 @@ describe('email sync foundations', () => {
     db.saveEmail({ uid_validity: '7', imap_uid: 45, received_at: now, body_text: 'Private email body', body_hash: 'hash-4', category: 'other', classification_json: '{}', proposed_job_id: null, match_status: 'no_match', review_status: 'pending_review', unresolved_reason: null, initial_import: 0 });
     const log = db.emailLog(1); expect(log).toMatchObject({ total: 1, limit: 1, offset: 0 }); expect(log.items[0]).not.toHaveProperty('body_text'); expect(log.items[0]).not.toHaveProperty('classification_json');
   });
+  it('keeps secrets out of portable backups and Sheets payloads', () => {
+    const db = new JobDatabase(':memory:');
+    db.saveBackupSettings({ webhook_url: 'https://script.google.com/macros/s/example/exec', encrypted_webhook_secret: 'encrypted-secret', automatic_enabled: 1, interval_hours: 24 });
+    const portable = JSON.stringify(db.portableBackup()); const sheets = JSON.stringify(db.sheetSyncPayload());
+    expect(portable).not.toContain('encrypted-secret'); expect(sheets).not.toContain('encrypted-secret'); expect(sheets).toContain('"Jobs"'); expect(sheets).toContain('"Emails"');
+  });
 });

@@ -9,3 +9,4 @@ if (databasePath !== ':memory:') await mkdir(path.dirname(databasePath), { recur
 const app = buildApp({ databasePath, apiToken, aiSecretsKey: process.env.AI_SECRETS_KEY, profilePath: process.env.CANDIDATE_PROFILE_PATH });
 await app.listen({ port, host });
 app.emailScheduler.start();
+app.backupScheduler.start();

@@ -168,4 +168,42 @@ AI-функции необязательны. В настройках можно
 
 ## Резервная копия
 
-Для Docker достаточно регулярно делать backup именованного volume `job-tracker-data`. Для локального запуска сохраните файл `data/jobs.db` при остановленном приложении. В нём находятся и вакансии, и DOM-снапшоты, и события, и AI-конфигурация.
+В **Settings → Общее → Резервные копии** доступны два скачиваемых формата:
+
+- **JSON** — переносимый полный снимок данных: вакансии, DOM-снапшоты, события, теги, AI-анализы, история писем и JSON-профиль кандидата. В него намеренно не попадают API-ключи, IMAP-пароль и секрет webhook.
+- **CSV** — компактная таблица вакансий для Excel, Numbers или ручного анализа.
+
+Для аварийного восстановления самого сервера дополнительно сохраняйте именованный Docker volume `job-tracker-data` (или `data/jobs.db` при локальном запуске). В нём остаются зашифрованные настройки подключений, которые не экспортируются в JSON.
+
+### Google Sheets без Google API
+
+Трекер умеет отправлять синхронизацию в **Google Apps Script Web App** обычным HTTPS webhook. Это не требует Google API, OAuth или доступа приложения к вашему Google-аккаунту. В Sheets уходят только компактные листы `Jobs`, `Events`, `Tags`, `Emails`; HTML-снапшоты и тела писем не передаются.
+
+1. Создайте Google Sheet → **Extensions → Apps Script**.
+2. Вставьте код ниже. При желании задайте один и тот же секрет в `WEBHOOK_SECRET` и в настройках трекера.
+3. Нажмите **Deploy → New deployment → Web app**, запускайте от своего аккаунта и дайте доступ, подходящий вашей схеме. Скопируйте URL, оканчивающийся на `/exec`.
+4. Вставьте URL в **Settings → Общее → Резервные копии**, сохраните и нажмите **Синхронизировать сейчас**. Там же можно включить периодическую синхронизацию.
+
+```javascript
+const WEBHOOK_SECRET = ''; // необязательно: одинаковое значение в Job Tracker
+
+function doPost(event) {
+  const payload = JSON.parse(event.postData.contents);
+  if (WEBHOOK_SECRET && payload.webhook_secret !== WEBHOOK_SECRET) {
+    return ContentService.createTextOutput('forbidden');
+  }
+  const book = SpreadsheetApp.getActive();
+  Object.entries(payload.sheets || {}).forEach(([name, rows]) => {
+    const sheet = book.getSheetByName(name) || book.insertSheet(name);
+    sheet.clearContents();
+    const keys = [...new Set(rows.flatMap(row => Object.keys(row)))];
+    if (!keys.length) return;
+    sheet.getRange(1, 1, 1, keys.length).setValues([keys]);
+    const values = rows.map(row => keys.map(key => row[key] == null ? '' : String(row[key])));
+    if (values.length) sheet.getRange(2, 1, values.length, keys.length).setValues(values);
+    sheet.setFrozenRows(1);
+  });
+  return ContentService.createTextOutput(JSON.stringify({ ok: true }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+```
