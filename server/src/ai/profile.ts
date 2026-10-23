@@ -27,6 +27,7 @@ export class ProfileLoader {
     return this.parse((await this.activeFile()).raw);
   }
   async summary(): Promise<ProfileSummary> { try { const active = await this.activeFile(); const loaded = this.parse(active.raw); return { configured: true, source: active.source, profile_id: loaded.profile.profile_id, evidence_count: loaded.evidenceIds.size, hash: loaded.hash }; } catch { return { configured: false }; } }
+  validate(input: unknown) { return ProfileSchema.parse(input); }
   async replace(input: unknown): Promise<ProfileSummary> {
     if (!this.uploadedPath) throw new Error('Profile upload is unavailable with an in-memory database.');
     const profile = ProfileSchema.parse(input); const serialized = `${JSON.stringify(profile, null, 2)}\n`;

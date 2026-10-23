@@ -53,4 +53,11 @@ describe('email sync foundations', () => {
     const portable = JSON.stringify(db.portableBackup()); const sheets = JSON.stringify(db.sheetSyncPayload());
     expect(portable).not.toContain('encrypted-secret'); expect(sheets).not.toContain('encrypted-secret'); expect(sheets).toContain('"Jobs"'); expect(sheets).toContain('"Emails"');
   });
+  it('replaces tracker data from a portable backup while retaining local secrets', () => {
+    const source = new JobDatabase(':memory:'); const now = '2026-10-23T12:00:00.000Z';
+    const imported = source.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/restore', title: 'Restored Engineer', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: now });
+    const backup = source.portableBackup(); const target = new JobDatabase(':memory:');
+    target.saveBackupSettings({ encrypted_webhook_secret: 'keep-this', automatic_enabled: 0 }); target.restorePortableBackup(backup.data);
+    expect(target.get(imported.jobId)).toMatchObject({ title: 'Restored Engineer', company: 'Example' }); expect(target.backupSettings().encrypted_webhook_secret).toBe('keep-this');
+  });
 });

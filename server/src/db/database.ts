@@ -270,4 +270,15 @@ export class JobDatabase {
     return { schema_version: 1, exported_at: new Date().toISOString(), sheets: { Jobs: jobs, Events: events, Tags: tags, Emails: emails } };
   }
   csvJobs() { return this.db.prepare("SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.source, jobs.source_url, jobs.status, jobs.interview_stage, jobs.result_outcome, jobs.archive_reason, jobs.created_at, jobs.updated_at, GROUP_CONCAT(tags.name, ', ') AS tags FROM jobs LEFT JOIN job_tags ON job_tags.job_id=jobs.id LEFT JOIN tags ON tags.id=job_tags.tag_id GROUP BY jobs.id ORDER BY jobs.created_at DESC").all() as Array<Record<string, string | null>>; }
+  restorePortableBackup(data: { jobs: Record<string, unknown>[]; snapshots: Record<string, unknown>[]; job_events: Record<string, unknown>[]; tags: Record<string, unknown>[]; job_tags: Record<string, unknown>[]; job_match_analyses: Record<string, unknown>[]; email_records: Record<string, unknown>[]; email_effects: Record<string, unknown>[]; ai_provider_connections?: Record<string, unknown>[] }) {
+    const tableColumns = (table: string) => new Set((this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name));
+    const insertRows = (table: string, rows: Record<string, unknown>[], ignore = false) => { const allowed = tableColumns(table); for (const row of rows) { const columns = Object.keys(row).filter(column => allowed.has(column)); if (!columns.length) continue; const values = columns.map(column => row[column]); this.db.prepare(`INSERT ${ignore ? 'OR IGNORE ' : ''}INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...values); } };
+    const transaction = this.db.transaction(() => {
+      this.db.exec('DELETE FROM email_effects; DELETE FROM email_records; DELETE FROM job_match_analyses; DELETE FROM snapshots; DELETE FROM job_events; DELETE FROM job_tags; DELETE FROM jobs; DELETE FROM tags;');
+      const providers = (data.ai_provider_connections ?? []).map(row => ({ ...row, encrypted_api_key: '', enabled: 0 }));
+      insertRows('ai_provider_connections', providers, true);
+      insertRows('tags', data.tags); insertRows('jobs', data.jobs); insertRows('job_tags', data.job_tags); insertRows('snapshots', data.snapshots); insertRows('job_events', data.job_events); insertRows('job_match_analyses', data.job_match_analyses); insertRows('email_records', data.email_records); insertRows('email_effects', data.email_effects);
+    });
+    transaction(); return { jobs: data.jobs.length, snapshots: data.snapshots.length, events: data.job_events.length, tags: data.tags.length, emails: data.email_records.length };
+  }
 }
