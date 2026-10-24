@@ -18,7 +18,8 @@ async function collect(tabId: number): Promise<CollectorResult> {
     const successFactors = Boolean(select('.jobDisplayShell', '#job-company', '#job-location', '.jobdescription'));
     const workday = Boolean(select('[data-automation-id="jobPostingPage"]', '[data-automation-id="jobPostingHeader"]', '[data-automation-id="jobPostingDescription"]'));
     const greenhouse = Boolean(select('.job-post-container', '.job__header', '.job__description'));
-    const source = initialSource === 'linkedin' || initialSource === 'greenhouse' ? initialSource : successFactors ? 'successfactors' : workday ? 'workday' : greenhouse ? 'greenhouse' : initialSource;
+    const smartRecruiters = Boolean(select('main.jobad-main.job', 'main[itemtype="http://schema.org/JobPosting"]'));
+    const source = initialSource === 'linkedin' || initialSource === 'greenhouse' || initialSource === 'smartrecruiters' ? initialSource : successFactors ? 'successfactors' : workday ? 'workday' : greenhouse ? 'greenhouse' : smartRecruiters ? 'smartrecruiters' : initialSource;
     if (source === 'linkedin') {
       const description = select('[id^="JobDetails_AboutTheJob_"]', '.jobs-description__content', '.description__text', '.jobs-box__html-content');
       const titleHint = document.title.split('|')[0]?.trim(); const companyLink = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/company/"]')].find(link => Boolean(link.textContent?.trim()));
@@ -44,6 +45,22 @@ async function collect(tabId: number): Promise<CollectorResult> {
       const job = select('.job-post-container', '.job-post');
       html = job?.outerHTML ?? '';
       if (!job) warnings.push('Greenhouse job details are not visible. Open the vacancy page fully and save again.');
+    } else if (source === 'smartrecruiters') {
+      const job = select('main.jobad-main.job', 'main[itemtype="http://schema.org/JobPosting"]');
+      const snapshot = job?.cloneNode(true) as Element | undefined;
+      const value = (selector: string, attribute?: string) => {
+        const element = job?.querySelector(selector);
+        return (attribute ? element?.getAttribute(attribute) : element?.textContent)?.replace(/\s+/g, ' ').trim() || undefined;
+      };
+      const metadata = document.createElement('div');
+      const mark = (attribute: string, field: string | undefined) => { if (field) metadata.setAttribute(attribute, field); };
+      mark('data-company-name', value('[itemprop="hiringOrganization"] meta[itemprop="name"]', 'content'));
+      mark('data-job-location', value('spl-job-location', 'formattedaddress') ?? value('[itemprop="jobLocation"]'));
+      mark('data-employment-type', value('[itemprop="employmentType"]'));
+      mark('data-workplace-type', value('spl-job-location', 'workplacetype'));
+      snapshot?.prepend(metadata);
+      html = snapshot?.outerHTML ?? '';
+      if (!job) warnings.push('SmartRecruiters job details are not visible. Open the vacancy page fully and save again.');
     } else {
       const selection = window.getSelection();
       if (selection && selection.rangeCount && selection.toString().trim()) { const node = selection.getRangeAt(0).cloneContents(); const holder = document.createElement('div'); holder.append(node); html = holder.innerHTML; }

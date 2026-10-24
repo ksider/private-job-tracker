@@ -6,4 +6,5 @@ describe('browser read-only contract', () => {
   it('strips active elements before payload creation', () => { expect(source).toMatch(/script,iframe,form,input,button/); expect(source).toMatch(/document\.implementation\.createHTMLDocument/); });
   it('keeps the complete Workday job container for future parser upgrades', () => { expect(source).toMatch(/jobPostingPage/); expect(source).toMatch(/cloneNode\(true\)/); expect(source).toMatch(/jobSidebar/); });
   it('recognizes Greenhouse job pages without operating on the source site', () => { expect(source).toMatch(/job-post-container/); expect(source).toMatch(/source === 'greenhouse'/); });
+  it('recognizes SmartRecruiters job pages without operating on the source site', () => { expect(source).toMatch(/jobad-main/); expect(source).toMatch(/source === 'smartrecruiters'/); });
 });
