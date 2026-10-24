@@ -17,7 +17,8 @@ async function collect(tabId: number): Promise<CollectorResult> {
     const copy = document.implementation.createHTMLDocument('snapshot'); let html = ''; const warnings: string[] = [];
     const successFactors = Boolean(select('.jobDisplayShell', '#job-company', '#job-location', '.jobdescription'));
     const workday = Boolean(select('[data-automation-id="jobPostingPage"]', '[data-automation-id="jobPostingHeader"]', '[data-automation-id="jobPostingDescription"]'));
-    const source = initialSource === 'linkedin' ? 'linkedin' : successFactors ? 'successfactors' : workday ? 'workday' : initialSource;
+    const greenhouse = Boolean(select('.job-post-container', '.job__header', '.job__description'));
+    const source = initialSource === 'linkedin' || initialSource === 'greenhouse' ? initialSource : successFactors ? 'successfactors' : workday ? 'workday' : greenhouse ? 'greenhouse' : initialSource;
     if (source === 'linkedin') {
       const description = select('[id^="JobDetails_AboutTheJob_"]', '.jobs-description__content', '.description__text', '.jobs-box__html-content');
       const titleHint = document.title.split('|')[0]?.trim(); const companyLink = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/company/"]')].find(link => Boolean(link.textContent?.trim()));
@@ -39,6 +40,10 @@ async function collect(tabId: number): Promise<CollectorResult> {
       mark('[data-automation-id="jobSidebar"] [data-automation-id="richText"]', 'data-company-name');
       html = snapshot?.outerHTML ?? '';
       if (!page) warnings.push('Workday job details are not visible. Open the vacancy page fully and save again.');
+    } else if (source === 'greenhouse') {
+      const job = select('.job-post-container', '.job-post');
+      html = job?.outerHTML ?? '';
+      if (!job) warnings.push('Greenhouse job details are not visible. Open the vacancy page fully and save again.');
     } else {
       const selection = window.getSelection();
       if (selection && selection.rangeCount && selection.toString().trim()) { const node = selection.getRangeAt(0).cloneContents(); const holder = document.createElement('div'); holder.append(node); html = holder.innerHTML; }
