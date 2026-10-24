@@ -3,7 +3,7 @@ import type { InterviewStage, JobEventCreate, JobEventType, JobPatch, JobStatus,
 import type { MatchClassification, MatchResult, ProviderType } from '../ai/schemas.js';
 
 export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: string; title?: string; company?: string; location?: string; workplaceType?: string; employmentType?: string; descriptionHtml?: string; descriptionText?: string; warnings: string[]; parseStatus: 'parsed' | 'partial' | 'parse_failed'; parserVersion: string };
-export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; parse_status: string; last_event_at: string };
+export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; parse_status: string; last_event_at: string; stage_started_at: string };
 export type JobEventRow = { id: string; job_id: string; type: JobEventType; occurred_at: string; note: string; created_at: string };
 export type TagRow = { id: string; name: string; color: string; created_at: string; updated_at: string };
 export type AiConnectionRow = { id: string; provider_type: ProviderType; display_name: string; base_url: string | null; encrypted_api_key: string; model: string; max_output_tokens: number; timeout_ms: number; enabled: number; profile_consent_at: string | null; created_at: string; updated_at: string };
@@ -125,6 +125,13 @@ export class JobDatabase {
     else where.push("status != 'archived'");
     const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: 'jobs.updated_at DESC', company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: 'jobs.title COLLATE NOCASE ASC', waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
     return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id), jobs.created_at) AS last_event_at,
+      CASE jobs.status
+        WHEN 'saved' THEN jobs.created_at
+        WHEN 'sent' THEN COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type = 'applied'), jobs.updated_at, jobs.created_at)
+        WHEN 'interview' THEN COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up')), jobs.updated_at, jobs.created_at)
+        WHEN 'result' THEN COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type = 'result'), jobs.updated_at, jobs.created_at)
+        ELSE COALESCE(jobs.updated_at, jobs.created_at)
+      END AS stage_started_at,
       (SELECT classification FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_classification,
       (SELECT result_json FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_result_json,
       (SELECT model FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_model,
@@ -133,7 +140,15 @@ export class JobDatabase {
       (SELECT job_description_hash FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_job_hash
       FROM jobs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`).all(...values) as JobRow[];
   }
-  get(id: string) { return this.db.prepare('SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id), jobs.created_at) AS last_event_at FROM jobs WHERE id=?').get(id) as JobRow | undefined; }
+  get(id: string) { return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id), jobs.created_at) AS last_event_at,
+    CASE jobs.status
+      WHEN 'saved' THEN jobs.created_at
+      WHEN 'sent' THEN COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type = 'applied'), jobs.updated_at, jobs.created_at)
+      WHEN 'interview' THEN COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up')), jobs.updated_at, jobs.created_at)
+      WHEN 'result' THEN COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type = 'result'), jobs.updated_at, jobs.created_at)
+      ELSE COALESCE(jobs.updated_at, jobs.created_at)
+    END AS stage_started_at
+    FROM jobs WHERE id=?`).get(id) as JobRow | undefined; }
   events(id: string) { return this.db.prepare('SELECT * FROM job_events WHERE job_id=? ORDER BY occurred_at DESC, created_at DESC').all(id) as JobEventRow[]; }
   firstApplicationDay() { return (this.db.prepare("SELECT substr(MIN(occurred_at), 1, 10) AS day FROM job_events WHERE type='applied'").get() as { day: string | null }).day; }
   applicationStats(from?: string, to?: string) { const query = "SELECT substr(occurred_at, 1, 10) AS day, COUNT(*) AS count FROM job_events WHERE type='applied'"; if (!from || !to) return this.db.prepare(`${query} GROUP BY substr(occurred_at, 1, 10) ORDER BY day`).all() as Array<{ day: string; count: number }>; const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1); return this.db.prepare(`${query} AND occurred_at >= ? AND occurred_at < ? GROUP BY substr(occurred_at, 1, 10) ORDER BY day`).all(`${from}T00:00:00.000Z`, end.toISOString()) as Array<{ day: string; count: number }>; }
