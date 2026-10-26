@@ -161,7 +161,14 @@ export class JobDatabase {
   applicationEffectiveness(from?: string, to?: string) {
     const values: string[] = []; const where: string[] = [];
     if (from && to) { const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(`${from}T00:00:00.000Z`, end.toISOString()); }
-    const rows = this.db.prepare(`WITH applications AS (SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id)
+    const rows = this.db.prepare(`WITH applications AS (
+      SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id
+      UNION ALL
+      SELECT jobs.id, COALESCE((SELECT MIN(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up')), jobs.created_at)
+      FROM jobs
+      WHERE (jobs.status IN ('sent', 'interview', 'result') OR jobs.result_outcome IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
+    )
       SELECT jobs.id, jobs.source, jobs.result_outcome, applications.applied_at,
         (SELECT MIN(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up') AND occurred_at >= applications.applied_at) AS response_at,
         (SELECT classification FROM job_match_analyses WHERE job_id=jobs.id AND status='completed' ORDER BY completed_at DESC LIMIT 1) AS ai_classification
