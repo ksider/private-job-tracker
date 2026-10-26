@@ -4,6 +4,7 @@ import type { MatchClassification, MatchResult, ProviderType } from '../ai/schem
 
 export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: string; title?: string; company?: string; location?: string; workplaceType?: string; employmentType?: string; descriptionHtml?: string; descriptionText?: string; warnings: string[]; parseStatus: 'parsed' | 'partial' | 'parse_failed'; parserVersion: string };
 export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; parse_status: string; last_event_at: string; stage_started_at: string };
+export type ApplicationEffectivenessRow = { id: string; source: string; result_outcome: JobRow['result_outcome']; applied_at: string; response_at: string | null; ai_classification: MatchClassification | null; tags: string[] };
 export type JobEventRow = { id: string; job_id: string; type: JobEventType; occurred_at: string; note: string; created_at: string };
 export type TagRow = { id: string; name: string; color: string; created_at: string; updated_at: string };
 export type AiConnectionRow = { id: string; provider_type: ProviderType; display_name: string; base_url: string | null; encrypted_api_key: string; model: string; max_output_tokens: number; timeout_ms: number; enabled: number; profile_consent_at: string | null; created_at: string; updated_at: string };
@@ -151,7 +152,24 @@ export class JobDatabase {
     FROM jobs WHERE id=?`).get(id) as JobRow | undefined; }
   events(id: string) { return this.db.prepare('SELECT * FROM job_events WHERE job_id=? ORDER BY occurred_at DESC, created_at DESC').all(id) as JobEventRow[]; }
   firstApplicationDay() { return (this.db.prepare("SELECT substr(MIN(occurred_at), 1, 10) AS day FROM job_events WHERE type='applied'").get() as { day: string | null }).day; }
-  applicationStats(from?: string, to?: string) { const query = "SELECT substr(occurred_at, 1, 10) AS day, COUNT(*) AS count FROM job_events WHERE type='applied'"; if (!from || !to) return this.db.prepare(`${query} GROUP BY substr(occurred_at, 1, 10) ORDER BY day`).all() as Array<{ day: string; count: number }>; const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1); return this.db.prepare(`${query} AND occurred_at >= ? AND occurred_at < ? GROUP BY substr(occurred_at, 1, 10) ORDER BY day`).all(`${from}T00:00:00.000Z`, end.toISOString()) as Array<{ day: string; count: number }>; }
+  applicationStats(from?: string, to?: string) {
+    const applications = "WITH applications AS (SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id) SELECT substr(applied_at, 1, 10) AS day, COUNT(*) AS count FROM applications";
+    if (!from || !to) return this.db.prepare(`${applications} GROUP BY substr(applied_at, 1, 10) ORDER BY day`).all() as Array<{ day: string; count: number }>;
+    const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1);
+    return this.db.prepare(`${applications} WHERE applied_at >= ? AND applied_at < ? GROUP BY substr(applied_at, 1, 10) ORDER BY day`).all(`${from}T00:00:00.000Z`, end.toISOString()) as Array<{ day: string; count: number }>;
+  }
+  applicationEffectiveness(from?: string, to?: string) {
+    const values: string[] = []; const where: string[] = [];
+    if (from && to) { const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(`${from}T00:00:00.000Z`, end.toISOString()); }
+    const rows = this.db.prepare(`WITH applications AS (SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id)
+      SELECT jobs.id, jobs.source, jobs.result_outcome, applications.applied_at,
+        (SELECT MIN(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up') AND occurred_at >= applications.applied_at) AS response_at,
+        (SELECT classification FROM job_match_analyses WHERE job_id=jobs.id AND status='completed' ORDER BY completed_at DESC LIMIT 1) AS ai_classification
+      FROM jobs JOIN applications ON applications.job_id=jobs.id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`).all(...values) as Array<Omit<ApplicationEffectivenessRow, 'tags'>>;
+    const tagsByJob = new Map<string, string[]>();
+    if (rows.length) { const tagRows = this.db.prepare(`SELECT job_tags.job_id, tags.name FROM job_tags JOIN tags ON tags.id=job_tags.tag_id WHERE job_tags.job_id IN (${rows.map(() => '?').join(',')})`).all(...rows.map(row => row.id)) as Array<{ job_id: string; name: string }>; for (const tag of tagRows) tagsByJob.set(tag.job_id, [...(tagsByJob.get(tag.job_id) ?? []), tag.name]); }
+    return rows.map(row => ({ ...row, tags: tagsByJob.get(row.id) ?? [] }));
+  }
   jobCounts() { return this.db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status='archived' THEN 1 ELSE 0 END) AS archived FROM jobs").get() as { total: number; archived: number | null }; }
   private insertEvent(jobId: string, type: JobEventType, occurredAt: string, note = '') { this.db.prepare('INSERT INTO job_events (id,job_id,type,occurred_at,note,created_at) VALUES (?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, type, occurredAt, note, new Date().toISOString()); }
   addEvent(id: string, event: JobEventCreate) { const old = this.get(id); if (!old) return undefined; this.insertEvent(id, event.type, event.occurred_at, event.note); const interviewStage = ['hr_screening', 'interview', 'final_interview', 'follow_up'].includes(event.type) ? event.type as InterviewStage : null; this.db.prepare('UPDATE jobs SET status=?, interview_stage=?, updated_at=? WHERE id=?').run(interviewStage ? 'interview' : old.status, interviewStage ?? old.interview_stage, new Date().toISOString(), id); return this.get(id); }
