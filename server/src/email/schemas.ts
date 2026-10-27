@@ -2,6 +2,17 @@ import { z } from 'zod';
 
 export const EmailCategorySchema = z.enum(['rejection', 'application_confirmation', 'interview_invitation', 'assessment', 'decision_delayed', 'offer', 'other']);
 export type EmailCategory = z.infer<typeof EmailCategorySchema>;
+const AiAppointmentDateSchema = z.string().trim().max(100).nullable().optional().transform(value => {
+  if (!value || !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) return null;
+  const timestamp = Date.parse(value); return Number.isNaN(timestamp) ? null : new Date(timestamp).toISOString();
+});
+const AiMeetingUrlSchema = z.string().trim().max(2_048).nullable().optional().transform(value => {
+  if (!value) return null;
+  try { const url = new URL(value); return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null; }
+  catch { return null; }
+});
+const AiAppointmentFormatSchema = z.string().trim().nullable().optional().transform(value => value === 'video' || value === 'phone' || value === 'in_person' || value === 'other' ? value : null);
+const AiAppointmentTextSchema = z.string().trim().max(1_000).nullable().optional().transform(value => value || null);
 export const EmailClassificationSchema = z.object({
   category: EmailCategorySchema,
   company: z.string().trim().min(1).max(300).nullable(),
@@ -10,11 +21,11 @@ export const EmailClassificationSchema = z.object({
   evidenceQuote: z.string().trim().min(1).max(1_000).nullable(),
   explanation: z.string().trim().min(1).max(1_500),
   interviewAppointment: z.object({
-    startsAt: z.string().datetime().nullable(),
-    timeZone: z.string().trim().min(1).max(100).nullable(),
-    format: z.enum(['video', 'phone', 'in_person', 'other']).nullable(),
-    meetingUrl: z.string().trim().url().max(2_048).refine(value => { try { const protocol = new URL(value).protocol; return protocol === 'https:' || protocol === 'http:'; } catch { return false; } }, 'Meeting URL must use HTTP or HTTPS.').nullable(),
-    note: z.string().trim().min(1).max(1_000).nullable()
+    startsAt: AiAppointmentDateSchema,
+    timeZone: z.string().trim().max(100).nullable().optional().transform(value => value || null),
+    format: AiAppointmentFormatSchema,
+    meetingUrl: AiMeetingUrlSchema,
+    note: AiAppointmentTextSchema
   }).nullable().default(null)
 });
 export type EmailClassification = z.infer<typeof EmailClassificationSchema>;

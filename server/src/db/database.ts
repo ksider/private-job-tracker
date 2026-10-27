@@ -193,6 +193,7 @@ export class JobDatabase {
   jobCounts() { return this.db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status='archived' THEN 1 ELSE 0 END) AS archived FROM jobs").get() as { total: number; archived: number | null }; }
   private insertEvent(jobId: string, type: JobEventType, occurredAt: string, note = '') { this.db.prepare('INSERT INTO job_events (id,job_id,type,occurred_at,note,created_at) VALUES (?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, type, occurredAt, note, new Date().toISOString()); }
   appointments(jobId: string) { return this.db.prepare("SELECT * FROM interview_appointments WHERE job_id=? ORDER BY CASE status WHEN 'cancelled' THEN 1 ELSE 0 END, starts_at ASC").all(jobId) as InterviewAppointmentRow[]; }
+  nextAppointment(jobId: string) { const now = new Date().toISOString(); return this.db.prepare("SELECT * FROM interview_appointments WHERE job_id=? AND status IN ('proposed', 'confirmed') ORDER BY CASE WHEN starts_at >= ? THEN 0 ELSE 1 END, CASE WHEN starts_at >= ? THEN starts_at END ASC, CASE WHEN starts_at < ? THEN starts_at END DESC LIMIT 1").get(jobId, now, now, now) as InterviewAppointmentRow | undefined; }
   createAppointment(jobId: string, input: Pick<InterviewAppointmentRow, 'stage' | 'starts_at' | 'time_zone' | 'format' | 'meeting_url' | 'note'> & { status?: InterviewAppointmentStatus; source_email_id?: string | null }) {
     if (!this.get(jobId)) return undefined;
     const now = new Date().toISOString(); const id = crypto.randomUUID();
