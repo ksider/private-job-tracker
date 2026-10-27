@@ -10,6 +10,12 @@
 #ai-provider-dialog { width: min(920px, calc(100% - 2rem)); }
 #match-dialog { width: min(980px, calc(100% - 2rem)); }
 
+/* A color picker is part of a tag, not a separate form control. */
+.tag-color-input { appearance: none; -webkit-appearance: none; border-radius: 9999px; overflow: hidden; }
+.tag-color-input::-webkit-color-swatch-wrapper { padding: 0; }
+.tag-color-input::-webkit-color-swatch { border: 0; border-radius: 9999px; }
+.tag-color-input::-moz-color-swatch { border: 0; border-radius: 9999px; }
+
 /* Four columns fit on desktop; scrolling here wastes space and adds a phantom scrollbar. */
 @media (min-width: 1024px) {
   #board-view { overflow: visible; padding-bottom: 0; }

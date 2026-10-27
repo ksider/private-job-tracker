@@ -236,6 +236,7 @@ export class JobDatabase {
   }
   delete(id: string) { return this.db.prepare('DELETE FROM jobs WHERE id=?').run(id).changes > 0; }
   listTags() { return this.db.prepare('SELECT * FROM tags ORDER BY name COLLATE NOCASE').all() as TagRow[]; }
+  listTagsWithUsage() { return this.db.prepare('SELECT tags.*, COUNT(job_tags.job_id) AS job_count FROM tags LEFT JOIN job_tags ON job_tags.tag_id=tags.id GROUP BY tags.id ORDER BY job_count DESC, tags.name COLLATE NOCASE').all() as Array<TagRow & { job_count: number }>; }
   createTag(input: TagCreate) { const now = new Date().toISOString(); const tag = { id: crypto.randomUUID(), ...input, created_at: now, updated_at: now }; this.db.prepare('INSERT INTO tags (id,name,color,created_at,updated_at) VALUES (?,?,?,?,?)').run(tag.id, tag.name, tag.color, now, now); return tag; }
   updateTag(id: string, input: TagPatch) { const old = this.db.prepare('SELECT * FROM tags WHERE id=?').get(id) as TagRow | undefined; if (!old) return undefined; const now = new Date().toISOString(); this.db.prepare('UPDATE tags SET name=?, color=?, updated_at=? WHERE id=?').run(input.name ?? old.name, input.color ?? old.color, now, id); return this.db.prepare('SELECT * FROM tags WHERE id=?').get(id) as TagRow; }
   deleteTag(id: string) { return this.db.prepare('DELETE FROM tags WHERE id=?').run(id).changes > 0; }
