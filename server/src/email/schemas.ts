@@ -37,6 +37,8 @@ export const ImapSettingsSchema = z.object({
   tls_mode: z.enum(['tls', 'starttls']).optional().default('tls'),
   username: z.string().trim().max(500).optional().default(''),
   password: z.string().max(2_000).optional().default(''),
+  interview_mailbox: z.string().trim().max(500).optional().default(''),
+  rejection_mailbox: z.string().trim().max(500).optional().default(''),
   mailbox: z.string().trim().min(1).max(500).optional().default('INBOX'),
   sync_interval_minutes: z.number().int().min(5).max(24 * 60).optional().default(15),
   initial_sync_days: z.number().int().min(1).max(365).optional().default(30),

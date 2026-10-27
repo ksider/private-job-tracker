@@ -13,7 +13,7 @@ export type AiConnectionRow = { id: string; provider_type: ProviderType; display
 export type AiConnectionPublic = Omit<AiConnectionRow, 'encrypted_api_key' | 'enabled'> & { enabled: boolean; api_key_configured: boolean };
 export type AiSettingsRow = { default_connection_id: string | null; default_model: string | null; tag_connection_id: string | null; email_connection_id: string | null; generic_parse_connection_id: string | null; auto_match_on_import: number; auto_tags_on_import: number; auto_generic_parse_on_import: number; auto_email_classification: number };
 export type AiAnalysisRow = { id: string; job_id: string; provider_connection_id: string | null; provider_type: ProviderType; model: string; profile_hash: string; job_description_hash: string; prompt_version: string; classification: MatchClassification | null; result_json: string | null; status: 'running' | 'completed' | 'failed'; error_message: string | null; created_at: string; completed_at: string | null };
-export type ImapSettingsRow = { host: string; port: number; tls_mode: 'tls' | 'starttls'; username: string; encrypted_password: string; mailbox: string; enabled: number; sync_interval_minutes: number; initial_sync_days: number; rejection_handling: 'manual_review' | 'auto_exact' | 'notifications_only'; ai_consent_at: string | null; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; processed_count: number; rejection_count: number; review_count: number; updated_at: string };
+export type ImapSettingsRow = { host: string; port: number; tls_mode: 'tls' | 'starttls'; username: string; encrypted_password: string; mailbox: string; interview_mailbox: string; rejection_mailbox: string; enabled: number; sync_interval_minutes: number; initial_sync_days: number; rejection_handling: 'manual_review' | 'auto_exact' | 'notifications_only'; ai_consent_at: string | null; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; processed_count: number; rejection_count: number; review_count: number; updated_at: string };
 export type EmailRecordRow = { id: string; uid_validity: string; imap_uid: number; received_at: string; body_text: string; body_hash: string; category: string | null; classification_json: string | null; proposed_job_id: string | null; match_status: 'exact' | 'probable' | 'no_match' | null; review_status: 'pending_review' | 'applied' | 'ignored' | 'reverted'; unresolved_reason: string | null; initial_import: number; created_at: string; updated_at: string; job_title?: string | null; job_company?: string | null };
 export type EmailLogRow = Omit<EmailRecordRow, 'body_text' | 'body_hash' | 'classification_json'>;
 export type BackupSettingsRow = { webhook_url: string; encrypted_webhook_secret: string; automatic_enabled: number; interval_hours: number; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; updated_at: string };
@@ -86,7 +86,7 @@ export class JobDatabase {
     if (!settingsColumns.some(column => column.name === 'auto_email_classification_initialized')) this.db.exec('ALTER TABLE ai_settings ADD COLUMN auto_email_classification_initialized INTEGER NOT NULL DEFAULT 0');
     this.db.exec('UPDATE ai_settings SET auto_email_classification=1, auto_email_classification_initialized=1 WHERE auto_email_classification_initialized=0');
     this.db.exec(`CREATE TABLE IF NOT EXISTS imap_settings (
-      id INTEGER PRIMARY KEY CHECK (id = 1), host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 993, tls_mode TEXT NOT NULL DEFAULT 'tls', username TEXT NOT NULL DEFAULT '', encrypted_password TEXT NOT NULL DEFAULT '', mailbox TEXT NOT NULL DEFAULT 'INBOX', enabled INTEGER NOT NULL DEFAULT 0,
+      id INTEGER PRIMARY KEY CHECK (id = 1), host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 993, tls_mode TEXT NOT NULL DEFAULT 'tls', username TEXT NOT NULL DEFAULT '', encrypted_password TEXT NOT NULL DEFAULT '', mailbox TEXT NOT NULL DEFAULT 'INBOX', interview_mailbox TEXT NOT NULL DEFAULT '', rejection_mailbox TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 0,
       sync_interval_minutes INTEGER NOT NULL DEFAULT 15, initial_sync_days INTEGER NOT NULL DEFAULT 30, rejection_handling TEXT NOT NULL DEFAULT 'manual_review', ai_consent_at TEXT,
       last_sync_at TEXT, last_sync_status TEXT, last_error TEXT, processed_count INTEGER NOT NULL DEFAULT 0, rejection_count INTEGER NOT NULL DEFAULT 0, review_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '');
       INSERT OR IGNORE INTO imap_settings (id, updated_at) VALUES (1, '');
@@ -94,6 +94,9 @@ export class JobDatabase {
       INSERT OR IGNORE INTO imap_sync_state (id, updated_at) VALUES (1, '');
       CREATE TABLE IF NOT EXISTS imap_sync_lock (id INTEGER PRIMARY KEY CHECK (id = 1), locked_until TEXT);
       INSERT OR IGNORE INTO imap_sync_lock (id, locked_until) VALUES (1, NULL);
+      CREATE TABLE IF NOT EXISTS imap_mailbox_sync_state (
+        mailbox TEXT PRIMARY KEY, uid_validity TEXT, last_processed_uid INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT ''
+      );
       CREATE TABLE IF NOT EXISTS email_records (
         id TEXT PRIMARY KEY, uid_validity TEXT NOT NULL, imap_uid INTEGER NOT NULL, received_at TEXT NOT NULL, body_text TEXT NOT NULL, body_hash TEXT NOT NULL,
         category TEXT, classification_json TEXT, proposed_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, match_status TEXT, review_status TEXT NOT NULL DEFAULT 'pending_review', unresolved_reason TEXT, initial_import INTEGER NOT NULL DEFAULT 0,
@@ -107,6 +110,16 @@ export class JobDatabase {
         id INTEGER PRIMARY KEY CHECK (id = 1), webhook_url TEXT NOT NULL DEFAULT '', encrypted_webhook_secret TEXT NOT NULL DEFAULT '', automatic_enabled INTEGER NOT NULL DEFAULT 0,
         interval_hours INTEGER NOT NULL DEFAULT 24, last_sync_at TEXT, last_sync_status TEXT, last_error TEXT, updated_at TEXT NOT NULL DEFAULT '');
       INSERT OR IGNORE INTO backup_settings (id, updated_at) VALUES (1, '');`);
+    const imapColumns = this.db.prepare('PRAGMA table_info(imap_settings)').all() as Array<{ name: string }>;
+    const needsMailboxUpgrade = !imapColumns.some(column => column.name === 'interview_mailbox');
+    if (needsMailboxUpgrade) this.db.exec("ALTER TABLE imap_settings ADD COLUMN interview_mailbox TEXT NOT NULL DEFAULT ''");
+    if (!imapColumns.some(column => column.name === 'rejection_mailbox')) this.db.exec("ALTER TABLE imap_settings ADD COLUMN rejection_mailbox TEXT NOT NULL DEFAULT ''");
+    if (needsMailboxUpgrade) {
+      this.db.exec("UPDATE imap_settings SET interview_mailbox=mailbox WHERE interview_mailbox='' AND mailbox<>''");
+      this.db.exec(`INSERT OR IGNORE INTO imap_mailbox_sync_state (mailbox, uid_validity, last_processed_uid, updated_at)
+        SELECT interview_mailbox, uid_validity, last_processed_uid, imap_sync_state.updated_at
+        FROM imap_settings CROSS JOIN imap_sync_state WHERE interview_mailbox<>''`);
+    }
     this.db.exec("UPDATE jobs SET status='archived', archive_reason=CASE WHEN EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id AND email_effects.automatic=1) THEN 'email_exact' ELSE 'email_review' END, archive_seen_at=updated_at WHERE status='result' AND result_outcome='rejected' AND EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id)");
   }
   import(parsed: ParsedJob, raw: { html: string; text: string | null; collectorVersion: string; capturedAt: string }) {
@@ -241,11 +254,11 @@ export class JobDatabase {
   latestAnalysis(jobId: string) { return this.db.prepare("SELECT * FROM job_match_analyses WHERE job_id=? AND status='completed' ORDER BY completed_at DESC LIMIT 1").get(jobId) as AiAnalysisRow | undefined; }
   analysisHistory(jobId: string) { return this.db.prepare('SELECT * FROM job_match_analyses WHERE job_id=? ORDER BY created_at DESC').all(jobId) as AiAnalysisRow[]; }
   imapSettings() { return this.db.prepare('SELECT * FROM imap_settings WHERE id=1').get() as ImapSettingsRow; }
-  saveImapSettings(input: Partial<Pick<ImapSettingsRow, 'host' | 'port' | 'tls_mode' | 'username' | 'encrypted_password' | 'mailbox' | 'enabled' | 'sync_interval_minutes' | 'initial_sync_days' | 'rejection_handling' | 'ai_consent_at'>>) {
+  saveImapSettings(input: Partial<Pick<ImapSettingsRow, 'host' | 'port' | 'tls_mode' | 'username' | 'encrypted_password' | 'mailbox' | 'interview_mailbox' | 'rejection_mailbox' | 'enabled' | 'sync_interval_minutes' | 'initial_sync_days' | 'rejection_handling' | 'ai_consent_at'>>) {
     const old = this.imapSettings(); const now = new Date().toISOString();
-    this.db.prepare('UPDATE imap_settings SET host=?, port=?, tls_mode=?, username=?, encrypted_password=?, mailbox=?, enabled=?, sync_interval_minutes=?, initial_sync_days=?, rejection_handling=?, ai_consent_at=?, updated_at=? WHERE id=1').run(
+    this.db.prepare('UPDATE imap_settings SET host=?, port=?, tls_mode=?, username=?, encrypted_password=?, mailbox=?, interview_mailbox=?, rejection_mailbox=?, enabled=?, sync_interval_minutes=?, initial_sync_days=?, rejection_handling=?, ai_consent_at=?, updated_at=? WHERE id=1').run(
       input.host ?? old.host, input.port ?? old.port, input.tls_mode ?? old.tls_mode, input.username ?? old.username, input.encrypted_password ?? old.encrypted_password,
-      input.mailbox ?? old.mailbox, input.enabled ?? old.enabled, input.sync_interval_minutes ?? old.sync_interval_minutes, input.initial_sync_days ?? old.initial_sync_days,
+      input.mailbox ?? old.mailbox, input.interview_mailbox ?? old.interview_mailbox, input.rejection_mailbox ?? old.rejection_mailbox, input.enabled ?? old.enabled, input.sync_interval_minutes ?? old.sync_interval_minutes, input.initial_sync_days ?? old.initial_sync_days,
       input.rejection_handling ?? old.rejection_handling, input.ai_consent_at ?? old.ai_consent_at, now);
     return this.imapSettings();
   }
@@ -255,9 +268,11 @@ export class JobDatabase {
     return this.imapSettings();
   }
   markImapSyncRunning() { this.db.prepare("UPDATE imap_settings SET last_sync_status='running', last_error=NULL WHERE id=1").run(); return this.imapSettings(); }
-  syncState() { return this.db.prepare('SELECT * FROM imap_sync_state WHERE id=1').get() as { uid_validity: string | null; last_processed_uid: number; updated_at: string }; }
-  saveSyncState(uidValidity: string, lastUid: number) { this.db.prepare('UPDATE imap_sync_state SET uid_validity=?, last_processed_uid=?, updated_at=? WHERE id=1').run(uidValidity, lastUid, new Date().toISOString()); }
-  resetSyncState(uidValidity: string) { this.saveSyncState(uidValidity, 0); }
+  clearStaleImapSyncStatus() { this.db.prepare("UPDATE imap_settings SET last_sync_status='idle', last_error='Предыдущая синхронизация была остановлена. Запустите её вручную.' WHERE id=1 AND last_sync_status='running'").run(); return this.imapSettings(); }
+  syncState(mailbox: string) { return this.db.prepare('SELECT * FROM imap_mailbox_sync_state WHERE mailbox=?').get(mailbox) as { uid_validity: string | null; last_processed_uid: number; updated_at: string } | undefined; }
+  saveSyncState(mailbox: string, uidValidity: string, lastUid: number) { this.db.prepare(`INSERT INTO imap_mailbox_sync_state (mailbox, uid_validity, last_processed_uid, updated_at) VALUES (?,?,?,?)
+    ON CONFLICT(mailbox) DO UPDATE SET uid_validity=excluded.uid_validity, last_processed_uid=excluded.last_processed_uid, updated_at=excluded.updated_at`).run(mailbox, uidValidity, lastUid, new Date().toISOString()); }
+  resetSyncState(mailbox: string, uidValidity: string) { this.saveSyncState(mailbox, uidValidity, 0); }
   acquireImapSyncLease(milliseconds = 10 * 60_000) { const now = new Date(); const until = new Date(now.getTime() + milliseconds).toISOString(); return this.db.prepare("UPDATE imap_sync_lock SET locked_until=? WHERE id=1 AND (locked_until IS NULL OR locked_until < ?)").run(until, now.toISOString()).changes > 0; }
   releaseImapSyncLease() { this.db.prepare('UPDATE imap_sync_lock SET locked_until=NULL WHERE id=1').run(); }
   hasEmail(uidValidity: string, uid: number) { return Boolean(this.db.prepare('SELECT 1 FROM email_records WHERE uid_validity=? AND imap_uid=?').get(uidValidity, uid)); }

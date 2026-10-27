@@ -9,7 +9,7 @@ import { classifyEmail } from './classification.js';
 import { matchEmailToJob } from './matching.js';
 import { EmailClassificationSchema, type ImapSettingsInput } from './schemas.js';
 
-type ImapCredentials = Pick<ImapSettingsRow, 'host' | 'port' | 'tls_mode' | 'username' | 'mailbox'> & { password: string };
+type ImapCredentials = Pick<ImapSettingsRow, 'host' | 'port' | 'tls_mode' | 'username'> & { password: string };
 type SyncResult = { processed: number; rejections: number; reviewItems: number; initialImport: boolean };
 
 export const imapErrorMessage = (error: unknown) => {
@@ -32,11 +32,13 @@ export class EmailSyncService {
   private configured(input: ImapSettingsInput, saved?: ImapSettingsRow): ImapCredentials {
     const password = input.password || (saved?.encrypted_password ? this.secrets.decrypt(saved.encrypted_password) : '');
     if (!input.host || !input.username || !password) throw new Error('Provide IMAP host, username, and password.');
-    return { host: input.host, port: input.port, tls_mode: input.tls_mode, username: input.username, mailbox: input.mailbox, password };
+    return { host: input.host, port: input.port, tls_mode: input.tls_mode, username: input.username, password };
   }
+  private selectedMailboxes(input: Pick<ImapSettingsInput, 'interview_mailbox' | 'rejection_mailbox'>) { return [...new Set([input.interview_mailbox, input.rejection_mailbox].map(mailbox => mailbox.trim()).filter(Boolean))]; }
   async test(input: ImapSettingsInput) {
     const client = this.connection(this.configured(input, this.db.imapSettings()));
-    try { await client.connect(); await client.getMailboxLock(input.mailbox, { readOnly: true }).then(lock => lock.release()); return { ok: true }; }
+    const mailboxes = this.selectedMailboxes(input); if (!mailboxes.length) throw new Error('Select at least one IMAP folder.');
+    try { await client.connect(); for (const mailbox of mailboxes) await client.getMailboxLock(mailbox, { readOnly: true }).then(lock => lock.release()); return { ok: true }; }
     finally { await client.logout().catch(() => undefined); }
   }
   async mailboxes(input: ImapSettingsInput) {
@@ -72,26 +74,39 @@ export class EmailSyncService {
   private async sync(): Promise<SyncResult> {
     const settings = this.db.imapSettings();
     const credentials = this.configured({ ...settings, enabled: Boolean(settings.enabled), password: '' , allow_ai_email_text: Boolean(settings.ai_consent_at) }, settings);
-    const client = this.connection(credentials); let lock: Awaited<ReturnType<ImapFlow['getMailboxLock']>> | undefined;
+    const client = this.connection(credentials);
     let processed = 0; let rejections = 0; let reviewItems = 0;
     try {
-      await client.connect(); lock = await client.getMailboxLock(settings.mailbox, { readOnly: true });
-      const mailbox = client.mailbox; const uidValidity = String(mailbox && mailbox.uidValidity || ''); if (!uidValidity) throw new Error('IMAP mailbox did not return UIDVALIDITY.');
-      const previous = this.db.syncState(); const initialImport = !previous.uid_validity || previous.uid_validity !== uidValidity;
+      const mailboxes = this.selectedMailboxes(settings); if (!mailboxes.length) throw new Error('Select at least one IMAP folder.');
+      await client.connect(); let initialImport = false;
+      for (const mailboxPath of mailboxes) {
+        const result = await this.syncMailbox(client, mailboxPath, settings); processed += result.processed; rejections += result.rejections; reviewItems += result.reviewItems; initialImport ||= result.initialImport;
+      }
+      this.db.updateImapSyncStatus({ status: 'ok', processed, rejections, reviews: reviewItems });
+      return { processed, rejections, reviewItems, initialImport };
+    } finally { await client.logout().catch(() => undefined); }
+  }
+  private async syncMailbox(client: ImapFlow, mailboxPath: string, settings: ImapSettingsRow): Promise<SyncResult> {
+    const lock = await client.getMailboxLock(mailboxPath, { readOnly: true });
+    let processed = 0; let rejections = 0; let reviewItems = 0;
+    try {
+      const rawUidValidity = String(client.mailbox && client.mailbox.uidValidity || ''); if (!rawUidValidity) throw new Error(`IMAP folder “${mailboxPath}” did not return UIDVALIDITY.`);
+      const previous = this.db.syncState(mailboxPath); const initialImport = !previous?.uid_validity || previous.uid_validity !== rawUidValidity;
       const startDate = new Date(); startDate.setUTCDate(startDate.getUTCDate() - settings.initial_sync_days);
       const ids = initialImport ? await client.search({ since: startDate }, { uid: true }) : await client.search({ uid: `${previous.last_processed_uid + 1}:*` }, { uid: true });
-      const uids = Array.isArray(ids) ? ids : [];
-      let maxUid = initialImport ? 0 : previous.last_processed_uid;
+      const uids = Array.isArray(ids) ? ids : []; let maxUid = initialImport ? 0 : previous.last_processed_uid;
+      // UIDVALIDITY belongs to a mailbox, not to the whole IMAP account.
+      const uidValidity = `${mailboxPath}\u001f${rawUidValidity}`;
       for await (const message of client.fetch(uids, { uid: true, source: true, internalDate: true }, { uid: true })) {
         maxUid = Math.max(maxUid, message.uid); if (this.db.hasEmail(uidValidity, message.uid) || !message.source) continue;
-        const parsed = await simpleParser(message.source as Buffer); const body = cleanBody(parsed.text || (typeof parsed.html === 'string' ? htmlText(parsed.html) : ''));
-        if (!body) continue;
+        const parsed = await simpleParser(message.source as Buffer);
+        if (parsed.from?.value.some(sender => sender.address?.trim().toLowerCase() === settings.username.trim().toLowerCase())) continue;
+        const body = cleanBody(parsed.text || (typeof parsed.html === 'string' ? htmlText(parsed.html) : '')); if (!body) continue;
         const email = await this.processEmail({ uidValidity, uid: message.uid, receivedAt: new Date(message.internalDate ?? Date.now()).toISOString(), body, initialImport, settings });
         processed++; if (email.category === 'rejection') rejections++; if (email.review_status === 'pending_review') reviewItems++;
       }
-      this.db.saveSyncState(uidValidity, maxUid); this.db.updateImapSyncStatus({ status: 'ok', processed, rejections, reviews: reviewItems });
-      return { processed, rejections, reviewItems, initialImport };
-    } finally { if (lock) lock.release(); await client.logout().catch(() => undefined); }
+      this.db.saveSyncState(mailboxPath, rawUidValidity, maxUid); return { processed, rejections, reviewItems, initialImport };
+    } finally { lock.release(); }
   }
   private async processEmail(input: { uidValidity: string; uid: number; receivedAt: string; body: string; initialImport: boolean; settings: ImapSettingsRow }) {
     const { settings } = input; let category: string | null = null; let classificationJson: string | null = null; let proposedJobId: string | null = null; let matchStatus: 'exact' | 'probable' | 'no_match' | null = null; let unresolvedReason: string | null = settings.ai_consent_at ? 'ai_not_configured' : 'ai_consent_required';
@@ -112,6 +127,8 @@ export class EmailSyncService {
 export class EmailSyncScheduler {
   private timer: NodeJS.Timeout | undefined;
   constructor(private readonly service: EmailSyncService, private readonly db: JobDatabase) {}
-  start() { this.stop(); const settings = this.db.imapSettings(); if (!settings.enabled) return; const run = () => void this.service.syncNow().catch(() => undefined); run(); this.timer = setInterval(run, settings.sync_interval_minutes * 60_000); }
+  // Email sync is deliberately manual. The setting enables the connection; it
+  // must not start polling the mailbox just because a form field was saved.
+  start() { this.stop(); this.db.clearStaleImapSyncStatus(); }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
 }

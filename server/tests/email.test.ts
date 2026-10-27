@@ -6,8 +6,8 @@ import { matchEmailToJob } from '../src/email/matching.js';
 describe('email sync foundations', () => {
   it('keeps an IMAP password encrypted and out of the settings response', async () => {
     const app = buildApp({ databasePath: ':memory:', apiToken: 'token', aiSecretsKey: '0123456789abcdef' });
-    const saved = await app.inject({ method: 'PUT', url: '/api/settings/imap', payload: { host: 'imap.example.test', port: 993, tls_mode: 'tls', username: 'user@example.test', password: 'app-password', mailbox: 'INBOX', enabled: false, allow_ai_email_text: false } });
-    expect(saved.statusCode).toBe(200); expect(JSON.stringify(saved.json())).not.toContain('app-password'); expect(saved.json()).toMatchObject({ password_configured: true, host: 'imap.example.test' });
+    const saved = await app.inject({ method: 'PUT', url: '/api/settings/imap', payload: { host: 'imap.example.test', port: 993, tls_mode: 'tls', username: 'user@example.test', password: 'app-password', interview_mailbox: 'Jobs/Interviews', rejection_mailbox: 'Jobs/Rejections', enabled: false, allow_ai_email_text: false } });
+    expect(saved.statusCode).toBe(200); expect(JSON.stringify(saved.json())).not.toContain('app-password'); expect(saved.json()).toMatchObject({ password_configured: true, host: 'imap.example.test', interview_mailbox: 'Jobs/Interviews', rejection_mailbox: 'Jobs/Rejections' });
     const loaded = await app.inject({ method: 'GET', url: '/api/settings/imap' });
     expect(JSON.stringify(loaded.json())).not.toContain('app-password'); await app.close();
   });
