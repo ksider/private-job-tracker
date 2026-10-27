@@ -1,6 +1,6 @@
 import type { ProviderType } from './schemas.js';
 
-export type ProviderConnection = { provider_type: ProviderType; base_url: string | null; api_key: string; model: string; max_output_tokens: number; timeout_ms: number };
+export type ProviderConnection = { provider_type: ProviderType; base_url: string | null; api_key: string; model: string; temperature?: number; max_output_tokens: number; timeout_ms: number; rate_limit_key?: string; requests_per_minute?: number; tokens_per_minute?: number };
 export type ModelInfo = { id: string; name: string };
 export type GenerationRequest = { system: string; user: string };
 export interface AIProvider { readonly id: ProviderType; validate(connection: ProviderConnection): Promise<void>; listModels(connection: ProviderConnection): Promise<ModelInfo[]>; generateJson(connection: ProviderConnection, request: GenerationRequest): Promise<unknown>; }
@@ -23,7 +23,7 @@ class OpenAiCompatibleProvider implements AIProvider {
     return (data.data?.map(model => model.id).filter((id): id is string => Boolean(id)) ?? data.models?.map(model => model.name).filter((id): id is string => Boolean(id)) ?? []).map(id => ({ id, name: id }));
   }
   async generateJson(connection: ProviderConnection, prompt: GenerationRequest) {
-    const data = await request(endpoint(this.base(connection), '/chat/completions'), { method: 'POST', headers: this.headers(connection), body: JSON.stringify({ model: connection.model, temperature: 0, max_tokens: connection.max_output_tokens, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }] }) }, connection.timeout_ms) as { choices?: Array<{ message?: { content?: string } }> };
+    const data = await request(endpoint(this.base(connection), '/chat/completions'), { method: 'POST', headers: this.headers(connection), body: JSON.stringify({ model: connection.model, temperature: connection.temperature ?? 0, max_tokens: connection.max_output_tokens, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }] }) }, connection.timeout_ms) as { choices?: Array<{ message?: { content?: string } }> };
     const content = data.choices?.[0]?.message?.content; if (!content) throw new Error('AI provider returned no analysis content.'); return safeJson(content);
   }
 }
@@ -33,7 +33,7 @@ class OllamaProvider implements AIProvider {
   private base(connection: ProviderConnection) { return ollamaUrl(connection.base_url); }
   async validate(connection: ProviderConnection) { await this.listModels(connection); }
   async listModels(connection: ProviderConnection) { const data = await request(endpoint(this.base(connection), '/api/tags'), {}, connection.timeout_ms) as { models?: Array<{ name?: string }> }; return (data.models ?? []).flatMap(model => model.name ? [{ id: model.name, name: model.name }] : []); }
-  async generateJson(connection: ProviderConnection, prompt: GenerationRequest) { const data = await request(endpoint(this.base(connection), '/api/chat'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: connection.model, stream: false, format: 'json', options: { temperature: 0, num_predict: connection.max_output_tokens }, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }] }) }, connection.timeout_ms) as { message?: { content?: string } }; if (!data.message?.content) throw new Error('Ollama returned no analysis content.'); return safeJson(data.message.content); }
+  async generateJson(connection: ProviderConnection, prompt: GenerationRequest) { const data = await request(endpoint(this.base(connection), '/api/chat'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: connection.model, stream: false, format: 'json', options: { temperature: connection.temperature ?? 0, num_predict: connection.max_output_tokens }, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }] }) }, connection.timeout_ms) as { message?: { content?: string } }; if (!data.message?.content) throw new Error('Ollama returned no analysis content.'); return safeJson(data.message.content); }
 }
 
 class GeminiProvider extends OpenAiCompatibleProvider {
@@ -47,6 +47,23 @@ export class ProviderRegistry {
     ['openai_compatible', new OpenAiCompatibleProvider('openai_compatible')],
     ['ollama', new OllamaProvider()], ['gemini', new GeminiProvider()]
   ]);
+  private readonly nextRequestAt = new Map<string, number>();
   get(type: ProviderType) { return this.providers.get(type)!; }
+  private async waitForSlot(connection: ProviderConnection, request: GenerationRequest) {
+    if (!connection.rate_limit_key || !connection.requests_per_minute || !connection.tokens_per_minute) return;
+    // A conservative reservation (input estimate plus max output) keeps every
+    // tracker feature under the provider's shared RPM and TPM budget.
+    const estimatedTokens = Math.ceil((request.system.length + request.user.length) / 4) + connection.max_output_tokens;
+    const rpmInterval = 60_000 / connection.requests_per_minute;
+    const tpmInterval = estimatedTokens * 60_000 / connection.tokens_per_minute;
+    const now = Date.now(); const next = Math.max(now, this.nextRequestAt.get(connection.rate_limit_key) ?? 0);
+    this.nextRequestAt.set(connection.rate_limit_key, next + Math.ceil(Math.max(rpmInterval, tpmInterval)));
+    if (next > now) await new Promise<void>(resolve => setTimeout(resolve, next - now));
+  }
+  async generateJson(connection: ProviderConnection, request: GenerationRequest) { await this.waitForSlot(connection, request); return this.get(connection.provider_type).generateJson(connection, request); }
+  limited(connection: ProviderConnection): AIProvider {
+    const provider = this.get(connection.provider_type);
+    return { id: provider.id, validate: value => provider.validate(value), listModels: value => provider.listModels(value), generateJson: (_value, request) => this.generateJson(connection, request) };
+  }
   definitions() { return [...this.providers.keys()].map(id => ({ id, name: ({ openai: 'OpenAI', gemini: 'Google Gemini', mistral: 'Mistral AI', ollama: 'Ollama (local)', openai_compatible: 'OpenAI-compatible API' } as Record<ProviderType, string>)[id] })); }
 }

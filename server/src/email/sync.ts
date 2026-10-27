@@ -25,16 +25,8 @@ const htmlText = (html: string) => load(html).root().text().replace(/\s+/g, ' ')
 
 export class EmailSyncService {
   private running = false;
-  private readonly nextEmailAiRequestAt = new Map<string, number>();
   constructor(private readonly db: JobDatabase, private readonly providers: ProviderRegistry, private readonly secrets: SecretStore) {}
-  private async waitForEmailAiSlot(connection: { id: string; email_requests_per_minute: number }) {
-    // Reserve the next slot before waiting, so concurrent manual classification
-    // cannot create a burst that exceeds the provider's configured RPM.
-    const interval = Math.ceil(60_000 / connection.email_requests_per_minute);
-    const now = Date.now(); const next = Math.max(now, this.nextEmailAiRequestAt.get(connection.id) ?? 0);
-    this.nextEmailAiRequestAt.set(connection.id, next + interval);
-    if (next > now) await new Promise<void>(resolve => setTimeout(resolve, next - now));
-  }
+  private aiConnection(connection: NonNullable<ReturnType<JobDatabase['getConnection']>>) { return { provider_type: connection.provider_type, base_url: connection.base_url, api_key: connection.encrypted_api_key ? this.secrets.decrypt(connection.encrypted_api_key) : '', model: connection.model, temperature: connection.temperature, max_output_tokens: connection.max_output_tokens, timeout_ms: connection.timeout_ms, rate_limit_key: connection.id, requests_per_minute: connection.requests_per_minute, tokens_per_minute: connection.tokens_per_minute }; }
   private connection(credentials: ImapCredentials) {
     return new ImapFlow({ host: credentials.host, port: credentials.port, secure: credentials.tls_mode === 'tls', doSTARTTLS: credentials.tls_mode === 'starttls', auth: { user: credentials.username, pass: credentials.password }, tls: { rejectUnauthorized: true }, logger: false, emitLogs: false, disableCompression: true, socketTimeout: 60_000, greetingTimeout: 30_000 });
   }
@@ -75,8 +67,8 @@ export class EmailSyncService {
       if (!settings.ai_consent_at) throw new Error('Save consent to send email text to AI first.');
       const ai = this.db.settings(); const connection = this.db.getConnection(ai.email_connection_id ?? ai.default_connection_id ?? '');
       if (!connection?.enabled) throw new Error('Configure and select an enabled email AI provider first.');
-      await this.waitForEmailAiSlot(connection);
-      classification = await classifyEmail(this.providers.get(connection.provider_type), { provider_type: connection.provider_type, base_url: connection.base_url, api_key: connection.encrypted_api_key ? this.secrets.decrypt(connection.encrypted_api_key) : '', model: connection.model, max_output_tokens: connection.max_output_tokens, timeout_ms: connection.timeout_ms }, email.body_text);
+      const aiConnection = this.aiConnection(connection);
+      classification = await classifyEmail(this.providers.limited(aiConnection), aiConnection, email.body_text);
     }
     const match = matchEmailToJob(this.db.list({ archive: 'all' }), classification, email.body_text);
     return this.db.classifyEmail(id, { category: classification.category, classification_json: JSON.stringify(classification), proposed_job_id: match.jobId, match_status: match.status, unresolved_reason: match.unresolvedReason, review_status: classification.category === 'other' ? 'ignored' : 'pending_review' });
@@ -123,8 +115,8 @@ export class EmailSyncService {
     const ai = this.db.settings(); const connection = this.db.getConnection(ai.email_connection_id ?? ai.default_connection_id ?? '');
     if (settings.ai_consent_at && ai.auto_email_classification && connection?.enabled) {
       try {
-        await this.waitForEmailAiSlot(connection);
-        const classification = await classifyEmail(this.providers.get(connection.provider_type), { provider_type: connection.provider_type, base_url: connection.base_url, api_key: connection.encrypted_api_key ? this.secrets.decrypt(connection.encrypted_api_key) : '', model: connection.model, max_output_tokens: connection.max_output_tokens, timeout_ms: connection.timeout_ms }, input.body);
+        const aiConnection = this.aiConnection(connection);
+        const classification = await classifyEmail(this.providers.limited(aiConnection), aiConnection, input.body);
         category = classification.category; classificationJson = JSON.stringify(classification);
         const match = matchEmailToJob(this.db.list({ archive: 'all' }), classification, input.body); proposedJobId = match.jobId; matchStatus = match.status; unresolvedReason = match.unresolvedReason;
       } catch (error) {
