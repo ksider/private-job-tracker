@@ -96,7 +96,7 @@ export class EmailSyncService {
   private async processEmail(input: { uidValidity: string; uid: number; receivedAt: string; body: string; initialImport: boolean; settings: ImapSettingsRow }) {
     const { settings } = input; let category: string | null = null; let classificationJson: string | null = null; let proposedJobId: string | null = null; let matchStatus: 'exact' | 'probable' | 'no_match' | null = null; let unresolvedReason: string | null = settings.ai_consent_at ? 'ai_not_configured' : 'ai_consent_required';
     const ai = this.db.settings(); const connection = this.db.getConnection(ai.email_connection_id ?? ai.default_connection_id ?? '');
-    if (settings.ai_consent_at && connection?.enabled) {
+    if (settings.ai_consent_at && ai.auto_email_classification && connection?.enabled) {
       const classification = await classifyEmail(this.providers.get(connection.provider_type), { provider_type: connection.provider_type, base_url: connection.base_url, api_key: connection.encrypted_api_key ? this.secrets.decrypt(connection.encrypted_api_key) : '', model: connection.model, max_output_tokens: connection.max_output_tokens, timeout_ms: connection.timeout_ms }, input.body);
       category = classification.category; classificationJson = JSON.stringify(classification);
       const match = matchEmailToJob(this.db.list({ archive: 'all' }), classification, input.body); proposedJobId = match.jobId; matchStatus = match.status; unresolvedReason = match.unresolvedReason;
