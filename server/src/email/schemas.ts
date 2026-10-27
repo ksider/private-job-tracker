@@ -8,7 +8,14 @@ export const EmailClassificationSchema = z.object({
   jobTitle: z.string().trim().min(1).max(500).nullable(),
   applicationId: z.string().trim().min(1).max(300).nullable(),
   evidenceQuote: z.string().trim().min(1).max(1_000).nullable(),
-  explanation: z.string().trim().min(1).max(1_500)
+  explanation: z.string().trim().min(1).max(1_500),
+  interviewAppointment: z.object({
+    startsAt: z.string().datetime().nullable(),
+    timeZone: z.string().trim().min(1).max(100).nullable(),
+    format: z.enum(['video', 'phone', 'in_person', 'other']).nullable(),
+    meetingUrl: z.string().trim().url().max(2_048).refine(value => { try { const protocol = new URL(value).protocol; return protocol === 'https:' || protocol === 'http:'; } catch { return false; } }, 'Meeting URL must use HTTP or HTTPS.').nullable(),
+    note: z.string().trim().min(1).max(1_000).nullable()
+  }).nullable().default(null)
 });
 export type EmailClassification = z.infer<typeof EmailClassificationSchema>;
 

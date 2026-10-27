@@ -6,6 +6,8 @@ export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: strin
 export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; parse_status: string; last_event_at: string; stage_started_at: string };
 export type ApplicationEffectivenessRow = { id: string; source: string; result_outcome: JobRow['result_outcome']; applied_at: string; response_at: string | null; ai_classification: MatchClassification | null; tags: string[] };
 export type JobEventRow = { id: string; job_id: string; type: JobEventType; occurred_at: string; note: string; created_at: string };
+export type InterviewAppointmentStatus = 'proposed' | 'confirmed' | 'cancelled';
+export type InterviewAppointmentRow = { id: string; job_id: string; stage: InterviewStage; starts_at: string; time_zone: string | null; format: 'video' | 'phone' | 'in_person' | 'other'; meeting_url: string | null; note: string; source_email_id: string | null; status: InterviewAppointmentStatus; created_at: string; updated_at: string };
 export type TagRow = { id: string; name: string; color: string; created_at: string; updated_at: string };
 export type AiConnectionRow = { id: string; provider_type: ProviderType; display_name: string; base_url: string | null; encrypted_api_key: string; model: string; max_output_tokens: number; timeout_ms: number; enabled: number; profile_consent_at: string | null; created_at: string; updated_at: string };
 export type AiConnectionPublic = Omit<AiConnectionRow, 'encrypted_api_key' | 'enabled'> & { enabled: boolean; api_key_configured: boolean };
@@ -36,6 +38,11 @@ export class JobDatabase {
         id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
         type TEXT NOT NULL, occurred_at TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS job_events_job_date ON job_events(job_id, occurred_at DESC);
+      CREATE TABLE IF NOT EXISTS interview_appointments (
+        id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        stage TEXT NOT NULL, starts_at TEXT NOT NULL, time_zone TEXT, format TEXT NOT NULL DEFAULT 'video', meeting_url TEXT, note TEXT NOT NULL DEFAULT '',
+        source_email_id TEXT UNIQUE REFERENCES email_records(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'confirmed', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS interview_appointments_job_start ON interview_appointments(job_id, starts_at);
       INSERT INTO job_events (id, job_id, type, occurred_at, note, created_at)
         SELECT lower(hex(randomblob(16))), id, 'saved', created_at, '', created_at FROM jobs
         WHERE NOT EXISTS (SELECT 1 FROM job_events WHERE job_events.job_id = jobs.id);
@@ -185,6 +192,18 @@ export class JobDatabase {
   }
   jobCounts() { return this.db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status='archived' THEN 1 ELSE 0 END) AS archived FROM jobs").get() as { total: number; archived: number | null }; }
   private insertEvent(jobId: string, type: JobEventType, occurredAt: string, note = '') { this.db.prepare('INSERT INTO job_events (id,job_id,type,occurred_at,note,created_at) VALUES (?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, type, occurredAt, note, new Date().toISOString()); }
+  appointments(jobId: string) { return this.db.prepare("SELECT * FROM interview_appointments WHERE job_id=? ORDER BY CASE status WHEN 'cancelled' THEN 1 ELSE 0 END, starts_at ASC").all(jobId) as InterviewAppointmentRow[]; }
+  createAppointment(jobId: string, input: Pick<InterviewAppointmentRow, 'stage' | 'starts_at' | 'time_zone' | 'format' | 'meeting_url' | 'note'> & { status?: InterviewAppointmentStatus; source_email_id?: string | null }) {
+    if (!this.get(jobId)) return undefined;
+    const now = new Date().toISOString(); const id = crypto.randomUUID();
+    this.db.prepare('INSERT INTO interview_appointments (id,job_id,stage,starts_at,time_zone,format,meeting_url,note,source_email_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(id, jobId, input.stage, input.starts_at, input.time_zone ?? null, input.format, input.meeting_url ?? null, input.note, input.source_email_id ?? null, input.status ?? 'confirmed', now, now);
+    return this.db.prepare('SELECT * FROM interview_appointments WHERE id=?').get(id) as InterviewAppointmentRow;
+  }
+  updateAppointment(jobId: string, appointmentId: string, input: Partial<Pick<InterviewAppointmentRow, 'stage' | 'starts_at' | 'time_zone' | 'format' | 'meeting_url' | 'note' | 'status'>>) {
+    const old = this.db.prepare('SELECT * FROM interview_appointments WHERE id=? AND job_id=?').get(appointmentId, jobId) as InterviewAppointmentRow | undefined; if (!old) return undefined;
+    this.db.prepare('UPDATE interview_appointments SET stage=?, starts_at=?, time_zone=?, format=?, meeting_url=?, note=?, status=?, updated_at=? WHERE id=?').run(input.stage ?? old.stage, input.starts_at ?? old.starts_at, input.time_zone === undefined ? old.time_zone : input.time_zone, input.format ?? old.format, input.meeting_url === undefined ? old.meeting_url : input.meeting_url, input.note ?? old.note, input.status ?? old.status, new Date().toISOString(), appointmentId);
+    return this.db.prepare('SELECT * FROM interview_appointments WHERE id=?').get(appointmentId) as InterviewAppointmentRow;
+  }
   addEvent(id: string, event: JobEventCreate) { const old = this.get(id); if (!old) return undefined; this.insertEvent(id, event.type, event.occurred_at, event.note); const interviewStage = ['hr_screening', 'interview', 'final_interview', 'follow_up'].includes(event.type) ? event.type as InterviewStage : null; this.db.prepare('UPDATE jobs SET status=?, interview_stage=?, updated_at=? WHERE id=?').run(interviewStage ? 'interview' : old.status, interviewStage ?? old.interview_stage, new Date().toISOString(), id); return this.get(id); }
   update(id: string, patch: JobPatch) {
     const old = this.get(id); if (!old) return undefined;
@@ -295,6 +314,19 @@ export class JobDatabase {
     }); transaction(); return this.email(email.id);
   }
   confirmEmail(id: string, jobId?: string) { const email = this.email(id); if (!email) return undefined; return this.applyEmailEffect(email, jobId ?? email.proposed_job_id ?? '', false); }
+  confirmInterviewInvitation(id: string, jobId: string, appointment: Pick<InterviewAppointmentRow, 'stage' | 'starts_at' | 'time_zone' | 'format' | 'meeting_url' | 'note'>) {
+    const email = this.email(id); const job = this.get(jobId); if (!email || !job) return undefined;
+    const now = new Date().toISOString(); const transaction = this.db.transaction(() => {
+      this.db.prepare('UPDATE email_records SET proposed_job_id=?, review_status=?, unresolved_reason=NULL, updated_at=? WHERE id=?').run(jobId, 'applied', now, id);
+      this.insertEvent(jobId, 'email_detected', email.received_at, 'Email classification: interview invitation');
+      if (job.status !== 'interview') {
+        this.db.prepare('UPDATE jobs SET status=?, interview_stage=?, result_outcome=NULL, archive_reason=NULL, archive_seen_at=NULL, updated_at=? WHERE id=?').run('interview', appointment.stage, now, jobId);
+        this.insertEvent(jobId, appointment.stage, now, 'Interview invitation confirmed from email');
+      }
+      const existing = this.db.prepare('SELECT id FROM interview_appointments WHERE source_email_id=?').get(id) as { id: string } | undefined;
+      if (!existing) this.createAppointment(jobId, { ...appointment, source_email_id: id, status: 'proposed' });
+    }); transaction(); return this.email(id);
+  }
   autoApplyRejection(id: string) { const email = this.email(id); if (!email || email.initial_import || !['exact', 'probable'].includes(email.match_status ?? '') || email.category !== 'rejection' || !email.proposed_job_id) return undefined; return this.applyEmailEffect(email, email.proposed_job_id, true); }
   ignoreEmail(id: string) { const email = this.email(id); if (!email) return undefined; this.db.prepare("UPDATE email_records SET review_status='ignored', updated_at=? WHERE id=?").run(new Date().toISOString(), id); return this.email(id); }
   revertEmailEffect(id: string) {
@@ -307,7 +339,7 @@ export class JobDatabase {
   updateBackupSyncStatus(input: { status: string; error?: string | null }) { const now = new Date().toISOString(); this.db.prepare('UPDATE backup_settings SET last_sync_at=?, last_sync_status=?, last_error=? WHERE id=1').run(now, input.status, input.error?.slice(0, 500) ?? null); return this.backupSettings(); }
   portableBackup() {
     const select = (table: string) => this.db.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[];
-    return { schema_version: 1, exported_at: new Date().toISOString(), data: { jobs: select('jobs'), snapshots: select('snapshots'), job_events: select('job_events'), tags: select('tags'), job_tags: select('job_tags'), job_match_analyses: select('job_match_analyses'), email_records: select('email_records'), email_effects: select('email_effects'), ai_provider_connections: this.db.prepare('SELECT id, provider_type, display_name, base_url, model, max_output_tokens, timeout_ms, enabled, profile_consent_at, created_at, updated_at FROM ai_provider_connections').all(), ai_settings: select('ai_settings'), imap_settings: this.db.prepare('SELECT id, host, port, tls_mode, username, mailbox, enabled, sync_interval_minutes, initial_sync_days, rejection_handling, ai_consent_at, last_sync_at, last_sync_status, last_error, processed_count, rejection_count, review_count, updated_at FROM imap_settings').all() } };
+    return { schema_version: 1, exported_at: new Date().toISOString(), data: { jobs: select('jobs'), snapshots: select('snapshots'), job_events: select('job_events'), interview_appointments: select('interview_appointments'), tags: select('tags'), job_tags: select('job_tags'), job_match_analyses: select('job_match_analyses'), email_records: select('email_records'), email_effects: select('email_effects'), ai_provider_connections: this.db.prepare('SELECT id, provider_type, display_name, base_url, model, max_output_tokens, timeout_ms, enabled, profile_consent_at, created_at, updated_at FROM ai_provider_connections').all(), ai_settings: select('ai_settings'), imap_settings: this.db.prepare('SELECT id, host, port, tls_mode, username, mailbox, enabled, sync_interval_minutes, initial_sync_days, rejection_handling, ai_consent_at, last_sync_at, last_sync_status, last_error, processed_count, rejection_count, review_count, updated_at FROM imap_settings').all() } };
   }
   sheetSyncPayload() {
     const jobs = this.db.prepare("SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.source, jobs.source_url, jobs.status, jobs.interview_stage, jobs.application_id, jobs.result_outcome, jobs.archive_reason, jobs.captured_at, jobs.created_at, jobs.updated_at, (SELECT MAX(occurred_at) FROM job_events WHERE job_id=jobs.id) AS last_event_at, GROUP_CONCAT(tags.name, ', ') AS tags FROM jobs LEFT JOIN job_tags ON job_tags.job_id=jobs.id LEFT JOIN tags ON tags.id=job_tags.tag_id GROUP BY jobs.id ORDER BY jobs.created_at DESC").all();
@@ -317,15 +349,15 @@ export class JobDatabase {
     return { schema_version: 1, exported_at: new Date().toISOString(), sheets: { Jobs: jobs, Events: events, Tags: tags, Emails: emails } };
   }
   csvJobs() { return this.db.prepare("SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.source, jobs.source_url, jobs.status, jobs.interview_stage, jobs.result_outcome, jobs.archive_reason, jobs.created_at, jobs.updated_at, GROUP_CONCAT(tags.name, ', ') AS tags FROM jobs LEFT JOIN job_tags ON job_tags.job_id=jobs.id LEFT JOIN tags ON tags.id=job_tags.tag_id GROUP BY jobs.id ORDER BY jobs.created_at DESC").all() as Array<Record<string, string | null>>; }
-  restorePortableBackup(data: { jobs: Record<string, unknown>[]; snapshots: Record<string, unknown>[]; job_events: Record<string, unknown>[]; tags: Record<string, unknown>[]; job_tags: Record<string, unknown>[]; job_match_analyses: Record<string, unknown>[]; email_records: Record<string, unknown>[]; email_effects: Record<string, unknown>[]; ai_provider_connections?: Record<string, unknown>[] }) {
+  restorePortableBackup(data: { jobs: Record<string, unknown>[]; snapshots: Record<string, unknown>[]; job_events: Record<string, unknown>[]; interview_appointments?: Record<string, unknown>[]; tags: Record<string, unknown>[]; job_tags: Record<string, unknown>[]; job_match_analyses: Record<string, unknown>[]; email_records: Record<string, unknown>[]; email_effects: Record<string, unknown>[]; ai_provider_connections?: Record<string, unknown>[] }) {
     const tableColumns = (table: string) => new Set((this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name));
     const insertRows = (table: string, rows: Record<string, unknown>[], ignore = false) => { const allowed = tableColumns(table); for (const row of rows) { const columns = Object.keys(row).filter(column => allowed.has(column)); if (!columns.length) continue; const values = columns.map(column => row[column]); this.db.prepare(`INSERT ${ignore ? 'OR IGNORE ' : ''}INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...values); } };
     const transaction = this.db.transaction(() => {
-      this.db.exec('DELETE FROM email_effects; DELETE FROM email_records; DELETE FROM job_match_analyses; DELETE FROM snapshots; DELETE FROM job_events; DELETE FROM job_tags; DELETE FROM jobs; DELETE FROM tags;');
+      this.db.exec('DELETE FROM email_effects; DELETE FROM email_records; DELETE FROM interview_appointments; DELETE FROM job_match_analyses; DELETE FROM snapshots; DELETE FROM job_events; DELETE FROM job_tags; DELETE FROM jobs; DELETE FROM tags;');
       const providers = (data.ai_provider_connections ?? []).map(row => ({ ...row, encrypted_api_key: '', enabled: 0 }));
       insertRows('ai_provider_connections', providers, true);
-      insertRows('tags', data.tags); insertRows('jobs', data.jobs); insertRows('job_tags', data.job_tags); insertRows('snapshots', data.snapshots); insertRows('job_events', data.job_events); insertRows('job_match_analyses', data.job_match_analyses); insertRows('email_records', data.email_records); insertRows('email_effects', data.email_effects);
+      insertRows('tags', data.tags); insertRows('jobs', data.jobs); insertRows('job_tags', data.job_tags); insertRows('snapshots', data.snapshots); insertRows('job_events', data.job_events); insertRows('job_match_analyses', data.job_match_analyses); insertRows('email_records', data.email_records); insertRows('interview_appointments', data.interview_appointments ?? []); insertRows('email_effects', data.email_effects);
     });
-    transaction(); return { jobs: data.jobs.length, snapshots: data.snapshots.length, events: data.job_events.length, tags: data.tags.length, emails: data.email_records.length };
+    transaction(); return { jobs: data.jobs.length, snapshots: data.snapshots.length, events: data.job_events.length, interviews: data.interview_appointments?.length ?? 0, tags: data.tags.length, emails: data.email_records.length };
   }
 }

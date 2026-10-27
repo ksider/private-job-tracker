@@ -5,7 +5,7 @@ export const PortableBackupSchema = z.object({
   schema_version: z.literal(1),
   exported_at: z.string(),
   data: z.object({
-    jobs: RowsSchema, snapshots: RowsSchema, job_events: RowsSchema, tags: RowsSchema, job_tags: RowsSchema,
+    jobs: RowsSchema, snapshots: RowsSchema, job_events: RowsSchema, interview_appointments: RowsSchema.optional().default([]), tags: RowsSchema, job_tags: RowsSchema,
     job_match_analyses: RowsSchema, email_records: RowsSchema, email_effects: RowsSchema,
     ai_provider_connections: RowsSchema.optional().default([]), ai_settings: RowsSchema.optional().default([]), imap_settings: RowsSchema.optional().default([])
   }),
