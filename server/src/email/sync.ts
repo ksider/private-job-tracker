@@ -25,7 +25,16 @@ const htmlText = (html: string) => load(html).root().text().replace(/\s+/g, ' ')
 
 export class EmailSyncService {
   private running = false;
+  private readonly nextEmailAiRequestAt = new Map<string, number>();
   constructor(private readonly db: JobDatabase, private readonly providers: ProviderRegistry, private readonly secrets: SecretStore) {}
+  private async waitForEmailAiSlot(connection: { id: string; email_requests_per_minute: number }) {
+    // Reserve the next slot before waiting, so concurrent manual classification
+    // cannot create a burst that exceeds the provider's configured RPM.
+    const interval = Math.ceil(60_000 / connection.email_requests_per_minute);
+    const now = Date.now(); const next = Math.max(now, this.nextEmailAiRequestAt.get(connection.id) ?? 0);
+    this.nextEmailAiRequestAt.set(connection.id, next + interval);
+    if (next > now) await new Promise<void>(resolve => setTimeout(resolve, next - now));
+  }
   private connection(credentials: ImapCredentials) {
     return new ImapFlow({ host: credentials.host, port: credentials.port, secure: credentials.tls_mode === 'tls', doSTARTTLS: credentials.tls_mode === 'starttls', auth: { user: credentials.username, pass: credentials.password }, tls: { rejectUnauthorized: true }, logger: false, emitLogs: false, disableCompression: true, socketTimeout: 60_000, greetingTimeout: 30_000 });
   }
@@ -66,6 +75,7 @@ export class EmailSyncService {
       if (!settings.ai_consent_at) throw new Error('Save consent to send email text to AI first.');
       const ai = this.db.settings(); const connection = this.db.getConnection(ai.email_connection_id ?? ai.default_connection_id ?? '');
       if (!connection?.enabled) throw new Error('Configure and select an enabled email AI provider first.');
+      await this.waitForEmailAiSlot(connection);
       classification = await classifyEmail(this.providers.get(connection.provider_type), { provider_type: connection.provider_type, base_url: connection.base_url, api_key: connection.encrypted_api_key ? this.secrets.decrypt(connection.encrypted_api_key) : '', model: connection.model, max_output_tokens: connection.max_output_tokens, timeout_ms: connection.timeout_ms }, email.body_text);
     }
     const match = matchEmailToJob(this.db.list({ archive: 'all' }), classification, email.body_text);
@@ -112,9 +122,18 @@ export class EmailSyncService {
     const { settings } = input; let category: string | null = null; let classificationJson: string | null = null; let proposedJobId: string | null = null; let matchStatus: 'exact' | 'probable' | 'no_match' | null = null; let unresolvedReason: string | null = settings.ai_consent_at ? 'ai_not_configured' : 'ai_consent_required';
     const ai = this.db.settings(); const connection = this.db.getConnection(ai.email_connection_id ?? ai.default_connection_id ?? '');
     if (settings.ai_consent_at && ai.auto_email_classification && connection?.enabled) {
-      const classification = await classifyEmail(this.providers.get(connection.provider_type), { provider_type: connection.provider_type, base_url: connection.base_url, api_key: connection.encrypted_api_key ? this.secrets.decrypt(connection.encrypted_api_key) : '', model: connection.model, max_output_tokens: connection.max_output_tokens, timeout_ms: connection.timeout_ms }, input.body);
-      category = classification.category; classificationJson = JSON.stringify(classification);
-      const match = matchEmailToJob(this.db.list({ archive: 'all' }), classification, input.body); proposedJobId = match.jobId; matchStatus = match.status; unresolvedReason = match.unresolvedReason;
+      try {
+        await this.waitForEmailAiSlot(connection);
+        const classification = await classifyEmail(this.providers.get(connection.provider_type), { provider_type: connection.provider_type, base_url: connection.base_url, api_key: connection.encrypted_api_key ? this.secrets.decrypt(connection.encrypted_api_key) : '', model: connection.model, max_output_tokens: connection.max_output_tokens, timeout_ms: connection.timeout_ms }, input.body);
+        category = classification.category; classificationJson = JSON.stringify(classification);
+        const match = matchEmailToJob(this.db.list({ archive: 'all' }), classification, input.body); proposedJobId = match.jobId; matchStatus = match.status; unresolvedReason = match.unresolvedReason;
+      } catch (error) {
+        // A shared provider quota may already be exhausted even when this
+        // tracker obeys its own configured spacing. Keep the email for review
+        // instead of failing the entire mailbox synchronization.
+        if (!(error instanceof Error) || !error.message.includes('(429)')) throw error;
+        unresolvedReason = 'ai_rate_limited';
+      }
     }
     const reviewStatus = category === 'other' ? 'ignored' : 'pending_review';
     const saved = this.db.saveEmail({ uid_validity: input.uidValidity, imap_uid: input.uid, received_at: input.receivedAt, body_text: input.body, body_hash: crypto.createHash('sha256').update(input.body).digest('hex'), category, classification_json: classificationJson, proposed_job_id: proposedJobId, match_status: matchStatus, review_status: reviewStatus, unresolved_reason: unresolvedReason, initial_import: input.initialImport ? 1 : 0 });
