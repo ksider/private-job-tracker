@@ -299,6 +299,15 @@ export class JobDatabase {
     const counts = this.db.prepare("SELECT SUM(CASE WHEN proposed_job_id IS NULL OR match_status IS NULL OR match_status='no_match' THEN 1 ELSE 0 END) AS unlinked, SUM(CASE WHEN proposed_job_id IS NOT NULL AND match_status='probable' THEN 1 ELSE 0 END) AS uncertain, SUM(CASE WHEN proposed_job_id IS NOT NULL AND match_status='exact' THEN 1 ELSE 0 END) AS exact FROM email_records").get() as { unlinked: number | null; uncertain: number | null; exact: number | null };
     return { items, total, counts: { unlinked: counts.unlinked ?? 0, uncertain: counts.uncertain ?? 0, exact: counts.exact ?? 0 }, limit: safeLimit, offset: safeOffset };
   }
+  exactEmailDuplicates() {
+    const rows = this.db.prepare("SELECT email_records.id, email_records.uid_validity, email_records.imap_uid, email_records.received_at, email_records.category, email_records.proposed_job_id, email_records.match_status, email_records.review_status, email_records.unresolved_reason, email_records.initial_import, email_records.created_at, email_records.updated_at, email_records.body_hash, jobs.title AS job_title, jobs.company AS job_company FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id WHERE email_records.body_hash IN (SELECT body_hash FROM email_records GROUP BY body_hash HAVING COUNT(*) > 1) ORDER BY email_records.body_hash, email_records.received_at ASC").all() as Array<EmailLogRow & { body_hash: string }>;
+    const groups = new Map<string, EmailLogRow[]>();
+    rows.forEach(({ body_hash, ...email }) => groups.set(body_hash, [...(groups.get(body_hash) ?? []), email]));
+    return { groups: [...groups.values()], copies: rows.length, groupsCount: groups.size };
+  }
+  emailLogForJob(jobId: string) {
+    return this.db.prepare("SELECT email_records.id, email_records.uid_validity, email_records.imap_uid, email_records.received_at, email_records.category, email_records.proposed_job_id, email_records.match_status, email_records.review_status, email_records.unresolved_reason, email_records.initial_import, email_records.created_at, email_records.updated_at, jobs.title AS job_title, jobs.company AS job_company FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id WHERE email_records.proposed_job_id=? AND email_records.match_status IN ('exact', 'probable') ORDER BY CASE email_records.match_status WHEN 'exact' THEN 0 ELSE 1 END, email_records.received_at DESC LIMIT 1").get(jobId) as EmailLogRow | undefined;
+  }
   pendingEmailReviewCount() { return (this.db.prepare("SELECT COUNT(*) AS count FROM email_records WHERE review_status='pending_review'").get() as { count: number }).count; }
   archiveNotificationCount() { return (this.db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status='archived' AND archive_reason IN ('email_exact','email_review') AND archive_seen_at IS NULL").get() as { count: number }).count; }
   markArchiveNotificationsSeen() { this.db.prepare("UPDATE jobs SET archive_seen_at=? WHERE status='archived' AND archive_reason IN ('email_exact','email_review') AND archive_seen_at IS NULL").run(new Date().toISOString()); }

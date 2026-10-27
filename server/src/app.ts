@@ -123,6 +123,8 @@ export function buildApp(config: AppConfig) {
   app.get('/api/email/sync/status', async () => imapView());
   app.get('/api/email/review', async () => db.reviewEmails());
   app.get('/api/email/log', async (request) => { const query = request.query as { limit?: string; offset?: string }; return db.emailLog(Number(query.limit), Number(query.offset)); });
+  app.get('/api/email/duplicates', async () => db.exactEmailDuplicates());
+  app.get('/api/email/log/for-job/:jobId', async (request) => ({ item: db.emailLogForJob((request.params as { jobId: string }).jobId) ?? null }));
   app.get('/api/archive/notifications', async () => ({ count: db.archiveNotificationCount() }));
   app.post('/api/archive/notifications/seen', async () => { db.markArchiveNotificationsSeen(); return { ok: true }; });
   app.post('/api/jobs/:id/archive-review', async (request, reply) => { const reason = (request.body as { reason?: unknown } | undefined)?.reason; if (reason !== 'email_exact' && reason !== 'email_review') return reply.code(400).send({ error: 'Invalid archive review state' }); try { return db.moveArchiveEmailReview((request.params as { id: string }).id, reason) ?? reply.code(404).send({ error: 'Archived email rejection not found' }); } catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : 'Could not move the archived rejection.' }); } });
