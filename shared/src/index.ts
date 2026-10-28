@@ -26,10 +26,18 @@ export const SnapshotSchema = z.object({
 });
 export type PageSnapshot = z.infer<typeof SnapshotSchema>;
 const JobTextField = z.string().trim().max(500).transform(value => value || null).nullable().optional();
+const GeoTextField = z.string().trim().max(200).transform(value => value || null).nullable().optional();
 export const JobPatchSchema = z.object({
   title: z.string().trim().min(1).max(500).optional(),
   company: JobTextField,
   location: JobTextField,
+  geo_country_code: z.string().trim().regex(/^[A-Za-z]{2}$/).transform(value => value.toUpperCase()).nullable().optional(),
+  geo_country: GeoTextField,
+  geo_region: GeoTextField,
+  geo_city: GeoTextField,
+  // `ai` is written only by the server-side normalizer. Any normal editor
+  // change to one of the geographic fields becomes a manual override.
+  geo_source: z.enum(['ai', 'manual']).nullable().optional(),
   employment_type: JobTextField,
   workplace_type: JobTextField,
   application_id: JobTextField,
