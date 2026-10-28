@@ -5,6 +5,7 @@ import type { MatchClassification, MatchResult, ProviderType } from '../ai/schem
 export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: string; title?: string; company?: string; location?: string; workplaceType?: string; employmentType?: string; descriptionHtml?: string; descriptionText?: string; warnings: string[]; parseStatus: 'parsed' | 'partial' | 'parse_failed'; parserVersion: string };
 export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; parse_status: string; last_event_at: string; stage_started_at: string };
 export type ApplicationEffectivenessRow = { id: string; source: string; result_outcome: JobRow['result_outcome']; applied_at: string; response_at: string | null; ai_classification: MatchClassification | null; tags: string[] };
+export type CohortApplicationRow = { id: string; applied_at: string; application_date_source: 'applied_event' | 'created_at'; first_response_event_at: string | null; first_response_email_at: string | null; first_hr_event_at: string | null; first_hr_email_at: string | null; has_undated_hr_progression: number };
 export type JobEventRow = { id: string; job_id: string; type: JobEventType; occurred_at: string; note: string; created_at: string };
 export type InterviewAppointmentStatus = 'proposed' | 'confirmed' | 'cancelled';
 export type InterviewAppointmentRow = { id: string; job_id: string; stage: InterviewStage; starts_at: string; time_zone: string | null; format: 'video' | 'phone' | 'in_person' | 'other'; meeting_url: string | null; note: string; source_email_id: string | null; status: InterviewAppointmentStatus; created_at: string; updated_at: string };
@@ -207,6 +208,29 @@ export class JobDatabase {
     if (rows.length) { const tagRows = this.db.prepare(`SELECT job_tags.job_id, tags.name FROM job_tags JOIN tags ON tags.id=job_tags.tag_id WHERE job_tags.job_id IN (${rows.map(() => '?').join(',')})`).all(...rows.map(row => row.id)) as Array<{ job_id: string; name: string }>; for (const tag of tagRows) tagsByJob.set(tag.job_id, [...(tagsByJob.get(tag.job_id) ?? []), tag.name]); }
     return rows.map(row => ({ ...row, tags: tagsByJob.get(row.id) ?? [] }));
   }
+  cohortApplications(from?: string, to?: string) {
+    const values: string[] = []; const where: string[] = [];
+    if (from && to) { const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(`${from}T00:00:00.000Z`, end.toISOString()); }
+    return this.db.prepare(`WITH applications AS (
+      SELECT job_id, MIN(occurred_at) AS applied_at, 'applied_event' AS application_date_source FROM job_events WHERE type='applied' GROUP BY job_id
+      UNION ALL
+      SELECT jobs.id, jobs.created_at AS applied_at, 'created_at' AS application_date_source
+      FROM jobs
+      WHERE NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
+        AND (jobs.status IN ('sent','interview','result') OR jobs.result_outcome IS NOT NULL
+          OR EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening','interview','final_interview','follow_up','rejection_received')))
+    ) SELECT jobs.id, applications.applied_at, applications.application_date_source,
+      (SELECT MIN(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN ('rejection_received','hr_screening','interview','final_interview','follow_up') AND occurred_at >= applications.applied_at) AS first_response_event_at,
+      (SELECT MIN(received_at) FROM email_records WHERE proposed_job_id=jobs.id AND review_status='applied' AND category IN ('rejection','interview_invitation','assessment','decision_delayed','offer') AND received_at >= applications.applied_at) AS first_response_email_at,
+      (SELECT MIN(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening','interview','final_interview','follow_up') AND occurred_at >= applications.applied_at) AS first_hr_event_at,
+      (SELECT MIN(received_at) FROM email_records WHERE proposed_job_id=jobs.id AND review_status='applied' AND category IN ('interview_invitation','offer') AND received_at >= applications.applied_at) AS first_hr_email_at,
+      CASE WHEN (jobs.status='interview' OR jobs.result_outcome='offer')
+        AND NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening','interview','final_interview','follow_up') AND occurred_at >= applications.applied_at)
+        AND NOT EXISTS (SELECT 1 FROM email_records WHERE proposed_job_id=jobs.id AND review_status='applied' AND category IN ('interview_invitation','offer') AND received_at >= applications.applied_at)
+      THEN 1 ELSE 0 END AS has_undated_hr_progression
+      FROM applications JOIN jobs ON jobs.id=applications.job_id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`).all(...values) as CohortApplicationRow[];
+  }
+  cohortMissingApplicationDate() { return 0; }
   jobCounts() { return this.db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status='archived' THEN 1 ELSE 0 END) AS archived FROM jobs").get() as { total: number; archived: number | null }; }
   private insertEvent(jobId: string, type: JobEventType, occurredAt: string, note = '') { this.db.prepare('INSERT INTO job_events (id,job_id,type,occurred_at,note,created_at) VALUES (?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, type, occurredAt, note, new Date().toISOString()); }
   appointments(jobId: string) { return this.db.prepare("SELECT * FROM interview_appointments WHERE job_id=? ORDER BY CASE status WHEN 'cancelled' THEN 1 ELSE 0 END, starts_at ASC").all(jobId) as InterviewAppointmentRow[]; }
