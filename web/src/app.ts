@@ -539,12 +539,19 @@ function setupNotesPanel() {
   $('#detail-notes').closest('label')?.classList.add('hidden');
 }
 const jobRouteId = () => location.pathname.match(/^\/jobs\/([^/]+)$/)?.[1] ?? null;
-async function showJobsList(pushRoute = false) { jobEditDialog().close(); $('#detail-view').classList.add('hidden'); $('#list-view').classList.remove('hidden'); if (pushRoute && location.pathname !== '/') history.pushState(null, '', '/'); await loadJobs(); }
+function resetPageScroll() {
+  window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+}
+async function showJobsList(pushRoute = false) { jobEditDialog().close(); $('#detail-view').classList.add('hidden'); $('#list-view').classList.remove('hidden'); if (pushRoute && location.pathname !== '/') history.pushState(null, '', '/'); resetPageScroll(); await loadJobs(); }
 async function openJob(id: string, pushRoute = true) {
   const [job, tags] = await Promise.all([api(`/api/jobs/${id}`) as Promise<Job>, allTags.length ? Promise.resolve(allTags) : api('/api/tags') as Promise<Tag[]>]);
   current = job; allTags = tags;
   if (pushRoute && location.pathname !== `/jobs/${id}`) history.pushState(null, '', `/jobs/${id}`);
   $('#list-view').classList.add('hidden'); $('#detail-view').classList.remove('hidden');
+  resetPageScroll();
+  requestAnimationFrame(resetPageScroll);
   $('#detail-source').textContent = `${current.source} · ${current.parse_status} · Добавлено ${formatDate(current.created_at)}`;
   $('#detail-title').textContent = current.title ?? 'Без названия'; $('#detail-company').textContent = current.company ?? 'Неизвестная компания';
   renderDetailMeta(current);
@@ -594,8 +601,21 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#table-mode').onclick = () => { mode = 'table'; if (archiveMode) { archiveMode = false; void loadJobs().catch(error => show(error.message, true)); } else { syncViewState(); render(); } };
   $('#board-mode').onclick = () => { mode = 'board'; if (archiveMode) { archiveMode = false; void loadJobs().catch(error => show(error.message, true)); } else { syncViewState(); render(); } };
   $('#archive-toggle').onclick = () => { archiveMode = !archiveMode; viewState.status = ''; void loadJobs().catch(error => show(error.message, true)); };
-  const settingsButton = document.createElement('a'); settingsButton.href = '/settings'; settingsButton.title = 'Настройки'; settingsButton.setAttribute('aria-label', 'Настройки'); settingsButton.className = 'rounded-lg border border-gray-300 bg-white p-2.5 text-gray-700 hover:bg-gray-50'; settingsButton.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5 fill-none stroke-current" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.55V20h-3v-.09A1.7 1.7 0 0 0 10.68 18.36a1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7.02 14.7 1.7 1.7 0 0 0 5.47 13.67H5.4v-3h.07A1.7 1.7 0 0 0 7.02 9.64 1.7 1.7 0 0 0 6.68 7.76L6.62 7.7l2.12-2.12.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.55V4.4h3v.03a1.7 1.7 0 0 0 1.03 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1.03h.03v3h-.03A1.7 1.7 0 0 0 19.4 15Z"/></svg>'; const toolbarSyncButton = document.createElement('button'); toolbarSyncButton.type = 'button'; toolbarSyncButton.title = 'Синхронизировать почту'; toolbarSyncButton.setAttribute('aria-label', 'Синхронизировать почту'); toolbarSyncButton.className = 'rounded-lg border border-emerald-300 bg-white p-2.5 text-emerald-800 hover:bg-emerald-50'; toolbarSyncButton.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5 fill-none stroke-current" stroke-width="2"><path d="M20 11a8 8 0 0 0-14-4l-2 2M4 13a8 8 0 0 0 14 4l2-2"/><path d="M4 5v4h4M20 19v-4h-4"/></svg>'; toolbarSyncButton.onclick = () => void syncFromToolbar(toolbarSyncButton); $('#archive-toggle').after(settingsButton); settingsButton.after(toolbarSyncButton);
-  if (location.pathname === '/') { settingsButton.className = 'fixed right-4 top-4 z-40 rounded-lg border border-gray-300 bg-white p-2.5 text-gray-700 shadow-sm hover:bg-gray-50'; document.body.append(settingsButton); const statsButton = document.createElement('a'); statsButton.href = '/stats'; statsButton.title = 'Статистика'; statsButton.setAttribute('aria-label', 'Статистика'); statsButton.className = 'fixed right-4 top-16 z-40 rounded-lg border border-blue-200 bg-white p-2.5 text-blue-700 shadow-sm hover:bg-blue-50'; statsButton.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5 fill-none stroke-current" stroke-width="2"><path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-9"/></svg>'; document.body.append(statsButton); }
+  const settingsButton = document.createElement('a'); settingsButton.href = '/settings'; settingsButton.title = 'Настройки'; settingsButton.setAttribute('aria-label', 'Настройки'); settingsButton.className = 'rounded-lg border border-gray-300 bg-white p-2.5 text-gray-700 hover:bg-gray-50'; settingsButton.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5 fill-none stroke-current" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.55V20h-3v-.09A1.7 1.7 0 0 0 10.68 18.36a1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7.02 14.7 1.7 1.7 0 0 0 5.47 13.67H5.4v-3h.07A1.7 1.7 0 0 0 7.02 9.64 1.7 1.7 0 0 0 6.68 7.76L6.62 7.7l2.12-2.12.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.55V4.4h3v.03a1.7 1.7 0 0 0 1.03 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1.03h.03v3h-.03A1.7 1.7 0 0 0 19.4 15Z"/></svg>';
+  const toolbarSyncButton = document.createElement('button'); toolbarSyncButton.type = 'button'; toolbarSyncButton.title = 'Синхронизировать почту'; toolbarSyncButton.setAttribute('aria-label', 'Синхронизировать почту'); toolbarSyncButton.className = 'rounded-lg border border-emerald-300 bg-white p-2.5 text-emerald-800 hover:bg-emerald-50'; toolbarSyncButton.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5 fill-none stroke-current" stroke-width="2"><path d="M20 11a8 8 0 0 0-14-4l-2 2M4 13a8 8 0 0 0 14 4l2-2"/><path d="M4 5v4h4M20 19v-4h-4"/></svg>'; toolbarSyncButton.onclick = () => void syncFromToolbar(toolbarSyncButton);
+  if (location.pathname === '/' || jobRouteId()) {
+    const toolbar = document.createElement('nav');
+    toolbar.id = 'global-toolbar';
+    toolbar.setAttribute('aria-label', 'Основная навигация');
+    toolbar.className = 'fixed right-4 top-4 z-40 flex flex-col gap-2';
+    settingsButton.className = 'rounded-lg border border-gray-300 bg-white p-2.5 text-gray-700 shadow-sm hover:bg-gray-50';
+    toolbarSyncButton.className = 'rounded-lg border border-emerald-300 bg-white p-2.5 text-emerald-800 shadow-sm hover:bg-emerald-50';
+    toolbar.append(settingsButton, toolbarSyncButton);
+    if (location.pathname === '/') {
+      const statsButton = document.createElement('a'); statsButton.href = '/stats'; statsButton.title = 'Статистика'; statsButton.setAttribute('aria-label', 'Статистика'); statsButton.className = 'rounded-lg border border-blue-200 bg-white p-2.5 text-blue-700 shadow-sm hover:bg-blue-50'; statsButton.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5 fill-none stroke-current" stroke-width="2"><path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-9"/></svg>'; toolbar.append(statsButton);
+    }
+    document.body.append(toolbar);
+  }
   $('#ai-dialog-close').onclick = closeAiDialog; $('#ai-form-close').onclick = closeAiDialog; $('#ai-cancel').onclick = closeAiDialog; $('#ai-add-connection').onclick = resetAiForm;
   ($('#ai-connection-form') as HTMLFormElement).onsubmit = event => { event.preventDefault(); void saveAiConnection().catch(error => { $('#ai-form-message').textContent = error.message; }); };
   $('#ai-delete').onclick = () => void deleteAiConnection().catch(error => show(error.message, true));
