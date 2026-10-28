@@ -181,6 +181,15 @@ export class JobDatabase {
       (SELECT job_description_hash FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_job_hash
       FROM jobs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`).all(...values) as JobRow[];
   }
+  geographyBackfillCandidates(options: { includeArchived?: boolean; limit?: number } = {}) {
+    const archiveClause = options.includeArchived ? '' : "AND status != 'archived'";
+    const limit = Math.max(1, Math.min(options.limit ?? 10_000, 100_000));
+    return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id), jobs.created_at) AS last_event_at,
+      CASE jobs.status WHEN 'saved' THEN jobs.created_at ELSE COALESCE(jobs.updated_at, jobs.created_at) END AS stage_started_at
+      FROM jobs WHERE geo_source IS NULL AND geo_country_code IS NULL AND geo_country IS NULL AND geo_region IS NULL AND geo_city IS NULL
+      AND (COALESCE(location, '') <> '' OR COALESCE(description_text, '') <> '') ${archiveClause}
+      ORDER BY created_at ASC LIMIT ?`).all(limit) as JobRow[];
+  }
   get(id: string) { return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id), jobs.created_at) AS last_event_at,
     CASE jobs.status
       WHEN 'saved' THEN jobs.created_at
