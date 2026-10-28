@@ -47,6 +47,7 @@ describe('cohort conversion analytics', () => {
     const imported = db.import({ source: 'manual', sourceUrl: 'https://example.test/jobs/1', title: 'Role', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: '2026-01-01T00:00:00.000Z' });
     db.db.prepare("UPDATE jobs SET status='sent' WHERE id=?").run(imported.jobId);
     expect(db.cohortApplications()).toEqual([expect.objectContaining({ id: imported.jobId, application_date_source: 'created_at' })]);
+    expect(db.applicationStats()).toEqual([expect.objectContaining({ count: 1 })]);
     db.db.close();
   });
 });

@@ -182,9 +182,23 @@ export class JobDatabase {
     END AS stage_started_at
     FROM jobs WHERE id=?`).get(id) as JobRow | undefined; }
   events(id: string) { return this.db.prepare('SELECT * FROM job_events WHERE job_id=? ORDER BY occurred_at DESC, created_at DESC').all(id) as JobEventRow[]; }
-  firstApplicationDay() { return (this.db.prepare("SELECT substr(MIN(occurred_at), 1, 10) AS day FROM job_events WHERE type='applied'").get() as { day: string | null }).day; }
+  firstApplicationDay() { return (this.db.prepare(`WITH applications AS (
+    SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id
+    UNION ALL
+    SELECT jobs.id, jobs.created_at FROM jobs
+    WHERE NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
+      AND (jobs.status IN ('sent','interview','result') OR jobs.result_outcome IS NOT NULL
+        OR EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening','interview','final_interview','follow_up','rejection_received')))
+  ) SELECT substr(MIN(applied_at), 1, 10) AS day FROM applications`).get() as { day: string | null }).day; }
   applicationStats(from?: string, to?: string) {
-    const applications = "WITH applications AS (SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id) SELECT substr(applied_at, 1, 10) AS day, COUNT(*) AS count FROM applications";
+    const applications = `WITH applications AS (
+      SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id
+      UNION ALL
+      SELECT jobs.id, jobs.created_at FROM jobs
+      WHERE NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
+        AND (jobs.status IN ('sent','interview','result') OR jobs.result_outcome IS NOT NULL
+          OR EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening','interview','final_interview','follow_up','rejection_received')))
+    ) SELECT substr(applied_at, 1, 10) AS day, COUNT(*) AS count FROM applications`;
     if (!from || !to) return this.db.prepare(`${applications} GROUP BY substr(applied_at, 1, 10) ORDER BY day`).all() as Array<{ day: string; count: number }>;
     const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1);
     return this.db.prepare(`${applications} WHERE applied_at >= ? AND applied_at < ? GROUP BY substr(applied_at, 1, 10) ORDER BY day`).all(`${from}T00:00:00.000Z`, end.toISOString()) as Array<{ day: string; count: number }>;
