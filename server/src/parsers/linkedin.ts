@@ -17,6 +17,9 @@ export class LinkedInParser implements SourceParser {
   parse(snapshot: PageSnapshot): ParsedJob {
     const $ = cheerio.load(snapshot.snapshot.html); const sourceJobId = snapshot.url.match(/\/jobs\/view\/(\d+)/)?.[1];
     const header = text($, ['[data-snapshot-section="header"]']);
+    // Easy Apply is a LinkedIn UI attribute, not a vacancy requirement. Restrict the
+    // check to the captured header so prose in the job description cannot add the tag.
+    const easyApply = /\beasy\s+apply\b/i.test(header ?? '');
     const title = text($, ['[data-job-title]', '.job-details-jobs-unified-top-card__job-title', 'h1']) ?? titleFromPageTitle(snapshot.page_title);
     const company = text($, ['[data-company-name]', '.job-details-jobs-unified-top-card__company-name', '.topcard__org-name-link', '[data-snapshot-section="header"] a[href*="/company/"]']) ?? companyFromPageTitle(snapshot.page_title);
     const location = text($, ['[data-job-location]', '.job-details-jobs-unified-top-card__bullet', '.topcard__flavor--bullet']) ?? headerLocation(header, title, company);
@@ -25,6 +28,6 @@ export class LinkedInParser implements SourceParser {
     const descriptionText = description.length ? description.text().replace(/\s+/g, ' ').trim() : undefined;
     const employmentType = text($, ['[data-employment-type]']) ?? header?.match(/Full-time|Part-time|Contract|Internship/i)?.[0]; const workplaceType = text($, ['[data-workplace-type]']) ?? header?.match(/Hybrid|Remote|On-site/i)?.[0];
     const warnings: string[] = []; if (!sourceJobId) warnings.push('LinkedIn job id was not found in URL.'); if (!title) warnings.push('Job title was not found.'); if (!descriptionText) warnings.push('Job description was not captured; open it manually before saving.');
-    return { source: this.source, sourceJobId, sourceUrl: snapshot.url, title, company, location, workplaceType, employmentType, descriptionHtml, descriptionText, warnings, parseStatus: warnings.length ? 'partial' : 'parsed', parserVersion: this.version };
+    return { source: this.source, sourceJobId, sourceUrl: snapshot.url, title, company, location, workplaceType, employmentType, descriptionHtml, descriptionText, easyApply, warnings, parseStatus: warnings.length ? 'partial' : 'parsed', parserVersion: this.version };
   }
 }

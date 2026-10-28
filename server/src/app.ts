@@ -17,6 +17,11 @@ export function buildApp(config: AppConfig) {
   const connectionFor = (connection: NonNullable<ReturnType<JobDatabase['getConnection']>>, model?: string) => ({ provider_type: connection.provider_type, base_url: connection.base_url, api_key: connection.encrypted_api_key ? secrets.decrypt(connection.encrypted_api_key) : '', model: model || connection.model, temperature: connection.temperature, max_output_tokens: connection.max_output_tokens, timeout_ms: connection.timeout_ms, rate_limit_key: connection.id, requests_per_minute: connection.requests_per_minute, tokens_per_minute: connection.tokens_per_minute });
   const jobView = (job: NonNullable<ReturnType<JobDatabase['get']>>) => ({ ...job, next_interview: db.nextAppointment(job.id) });
   const backupView = () => { const { encrypted_webhook_secret, ...settings } = db.backupSettings(); return { ...settings, automatic_enabled: Boolean(settings.automatic_enabled), webhook_secret_configured: Boolean(encrypted_webhook_secret) }; };
+  const isEasyApplyTag = (name: string) => name.trim().toLocaleLowerCase() === 'easy apply';
+  const assignEasyApplyTag = (jobId: string) => {
+    const tag = db.listTags().find(item => isEasyApplyTag(item.name)) ?? db.createTag({ name: 'Easy Apply', color: '#0a66c2' });
+    db.setTags(jobId, [...db.tagsForJob(jobId).map(item => item.id), tag.id]);
+  };
   const effectivenessView = (from?: string, to?: string) => {
     const rows = db.applicationEffectiveness(from, to); const cutoff = Date.now() - 16 * 86_400_000;
     const summarize = (items: typeof rows) => { const progressed = items.filter(item => item.response_at).length; const responseDays = items.flatMap(item => item.response_at ? [(Date.parse(item.response_at) - Date.parse(item.applied_at)) / 86_400_000] : []); return { applications: items.length, progressed, offers: items.filter(item => item.result_outcome === 'offer').length, rejected: items.filter(item => item.result_outcome === 'rejected').length, withdrawn: items.filter(item => item.result_outcome === 'withdrawn').length, no_response: items.filter(item => !item.response_at && !item.result_outcome && Date.parse(item.applied_at) <= cutoff).length, average_response_days: responseDays.length ? Math.round(responseDays.reduce((sum, value) => sum + value, 0) / responseDays.length * 10) / 10 : null }; };
@@ -40,7 +45,8 @@ export function buildApp(config: AppConfig) {
           const limitedConnection = connectionFor(connection); const raw = await providers.limited(limitedConnection).generateJson(limitedConnection, { system: 'Return one JSON object only. Exact shape: {"tag_ids":["uuid"],"new_tags":["short reusable tag"]}. Select only fitting tags from the registry or propose at most five concise reusable tags. Do not use company names or exact job titles.', user: `UNTRUSTED VACANCY DESCRIPTION START\n${job.description_text.slice(0, 40_000)}\nUNTRUSTED VACANCY DESCRIPTION END\n\nTAG REGISTRY:\n${JSON.stringify(availableTags.map(tag => ({ id: tag.id, name: tag.name })))}` });
           const result = TagSuggestionsResultSchema.parse(raw); const allowed = new Set(availableTags.map(tag => tag.id)); const tagIds = [...new Set(result.tag_ids.filter(id => allowed.has(id)))].slice(0, 5); const names = new Set(availableTags.map(tag => tag.name.toLocaleLowerCase()));
           for (const name of result.new_tags) { const normalized = name.toLocaleLowerCase(); if (tagIds.length >= 5 || names.has(normalized)) continue; try { tagIds.push(db.createTag({ name, color: '#7c3aed' }).id); names.add(normalized); } catch { /* concurrent or duplicate tag */ } }
-          if (tagIds.length) db.setTags(job.id, tagIds);
+          const existingTagIds = db.tagsForJob(job.id).map(tag => tag.id);
+          if (tagIds.length) db.setTags(job.id, [...existingTagIds, ...tagIds]);
         }
       }
       if (settings.auto_match_on_import && job.description_text?.trim()) {
@@ -74,6 +80,7 @@ export function buildApp(config: AppConfig) {
     const checked = SnapshotSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid snapshot', details: checked.error.flatten() });
     const snapshot = checked.data; const sanitized = sanitizeSnapshotHtml(snapshot.snapshot.html); if (!sanitized.trim()) return reply.code(400).send({ error: 'Snapshot has no safe HTML content' });
     const clean = { ...snapshot, snapshot: { ...snapshot.snapshot, html: sanitized } }; const parser = registry.find(clean); const parsed = parser.parse(clean); const result = db.import(parsed, { html: sanitized, text: snapshot.snapshot.text ?? null, collectorVersion: snapshot.metadata.collector_version, capturedAt: snapshot.captured_at });
+    if (result.action === 'created' && parsed.source === 'linkedin' && parsed.easyApply) assignEasyApplyTag(result.jobId);
     if (result.action === 'created') void runImportAutomation(result.jobId);
     return { success: true, job_id: result.jobId, action: result.action, parser: parser.source, warnings: parsed.warnings };
   });
