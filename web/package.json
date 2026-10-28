@@ -1,6 +1,12 @@
 {
-  "name": "@job-tracker/web", "private": true, "type": "module",
-  "scripts": { "build": "tsc -p tsconfig.json && tailwindcss -c tailwind.config.js -i src/styles.css -o dist/styles.css --minify && node scripts/copy-static.mjs" },
+  "name": "@job-tracker/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tailwindcss -c tailwind.config.js -i src/styles.css -o dist/styles.css --minify && node scripts/copy-static.mjs"
+  },
   "dependencies": { "flowbite": "^2.5.2" },
-  "devDependencies": { "tailwindcss": "^3.4.17" }
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
 }
