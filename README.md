@@ -105,6 +105,19 @@ npm test
 npm run build
 ```
 
+### Дозаполнение географии
+
+После включения AI-тегов существующие вакансии можно один раз обработать отдельной командой. Она использует то же AI-подключение, что теги, но делает отдельный запрос нормализации географии; ручные значения и уже обработанные карточки не затрагиваются.
+
+В production-контейнере запускайте уже собранный файл — без `npm run build`:
+
+```sh
+node server/dist/scripts/backfill-geography.js
+node server/dist/scripts/backfill-geography.js --apply
+```
+
+Чтобы включить архив, добавьте `--include-archived`. Локальная команда `npm run backfill:geo --workspace=server -- --apply` также не пересобирает проект; для локальной пересборки перед запуском есть `npm run backfill:geo:build --workspace=server -- --apply`.
+
 ## Установка расширения
 
 1. Соберите проект: `npm run build`.
