@@ -22,10 +22,13 @@ async function collect(tabId: number): Promise<CollectorResult> {
     const source = initialSource === 'linkedin' || initialSource === 'greenhouse' || initialSource === 'smartrecruiters' ? initialSource : successFactors ? 'successfactors' : workday ? 'workday' : greenhouse ? 'greenhouse' : smartRecruiters ? 'smartrecruiters' : initialSource;
     if (source === 'linkedin') {
       const description = select('[id^="JobDetails_AboutTheJob_"]', '.jobs-description__content', '.description__text', '.jobs-box__html-content');
+      const selectedCard = [...document.querySelectorAll<HTMLElement>('[role="button"]')].map(card => card.textContent?.replace(/\s+/g, ' ').trim() ?? '').find(cardText => /^selected[,:]/i.test(cardText));
+      const easyApply = [...document.querySelectorAll<HTMLButtonElement>('button[aria-label]')].some(button => /^easy\s+apply(?:\s+to\s+(?:this\s+)?job)?$/i.test(button.getAttribute('aria-label')?.trim() ?? '')) || Boolean(selectedCard && /\bapplied\b[\s\S]*\beasy\s+apply\b/i.test(selectedCard));
       const titleHint = document.title.split('|')[0]?.trim(); const companyLink = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/company/"]')].find(link => Boolean(link.textContent?.trim()));
       let header: Element | undefined;
       for (let node: Element | null | undefined = companyLink?.parentElement; node && !header; node = node.parentElement) { const value = node.textContent?.replace(/\s+/g, ' ').trim() ?? ''; if (titleHint && value.includes(titleHint) && value.length <= 1_500) header = node; }
       html = [['header', header], ['description', description]].filter((part): part is [string, Element] => Boolean(part[1])).map(([name, node]) => `<section data-snapshot-section="${name}">${node.outerHTML}</section>`).join('');
+      if (easyApply) html += '<span data-snapshot-section="easy-apply">Easy Apply</span>';
       if (!description) warnings.push('Job description is not visible. Open the description manually and save again.');
       if (!header) warnings.push('Job header was not located; the backend will use the page title where possible.');
     } else if (source === 'successfactors') {
@@ -70,7 +73,8 @@ async function collect(tabId: number): Promise<CollectorResult> {
     copy.querySelectorAll('script,iframe,form,input,button,textarea,select,video,audio,img,link,style,object,embed,meta').forEach(element => element.remove());
     copy.querySelectorAll('*').forEach(element => [...element.attributes].forEach(attribute => { if (attribute.name.startsWith('on') || ['src', 'srcset', 'action', 'formaction'].includes(attribute.name) || (attribute.name === 'href' && !/^(https?:|mailto:|#|\/)/.test(attribute.value))) element.removeAttribute(attribute.name); }));
     const clean = copy.body.innerHTML.slice(0, 1_000_000);
-    return { snapshot: { schema_version: 1, source, content_type: 'job', url: location.href, page_title: document.title, captured_at: new Date().toISOString(), snapshot: { format: 'html', html: clean, text: copy.body.textContent?.replace(/\s+/g, ' ').trim() || null }, metadata: { collector_version: '1.2.0' } }, warnings, preview: (copy.body.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 300) };
+    const easyApply = source === 'linkedin' && copy.querySelector('[data-snapshot-section="easy-apply"]') !== null;
+    return { snapshot: { schema_version: 1, source, content_type: 'job', url: location.href, page_title: document.title, captured_at: new Date().toISOString(), snapshot: { format: 'html', html: clean, text: copy.body.textContent?.replace(/\s+/g, ' ').trim() || null }, metadata: { collector_version: '1.3.0', easy_apply: easyApply } }, warnings, preview: (copy.body.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 300) };
   }, args: [collectorSource] });
   return data as CollectorResult;
 }
