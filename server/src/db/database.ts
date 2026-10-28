@@ -32,7 +32,7 @@ export class JobDatabase {
       CREATE UNIQUE INDEX IF NOT EXISTS jobs_other_url ON jobs(source, source_url) WHERE source_job_id IS NULL;
       CREATE TABLE IF NOT EXISTS snapshots (
         id TEXT PRIMARY KEY, job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, source TEXT NOT NULL, source_url TEXT NOT NULL,
-        content_type TEXT NOT NULL, raw_html TEXT NOT NULL, raw_text TEXT, collector_version TEXT NOT NULL,
+        content_type TEXT NOT NULL, page_title TEXT, raw_html TEXT NOT NULL, raw_text TEXT, collector_version TEXT NOT NULL,
         parser_version TEXT NOT NULL, parse_status TEXT NOT NULL, captured_at TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS snapshots_job_id ON snapshots(job_id);
       CREATE TABLE IF NOT EXISTS job_events (
@@ -71,6 +71,8 @@ export class JobDatabase {
     if (!jobColumns.some(column => column.name === 'result_outcome')) this.db.exec('ALTER TABLE jobs ADD COLUMN result_outcome TEXT');
     if (!jobColumns.some(column => column.name === 'archive_reason')) this.db.exec('ALTER TABLE jobs ADD COLUMN archive_reason TEXT');
     if (!jobColumns.some(column => column.name === 'archive_seen_at')) this.db.exec('ALTER TABLE jobs ADD COLUMN archive_seen_at TEXT');
+    const snapshotColumns = this.db.prepare('PRAGMA table_info(snapshots)').all() as Array<{ name: string }>;
+    if (!snapshotColumns.some(column => column.name === 'page_title')) this.db.exec('ALTER TABLE snapshots ADD COLUMN page_title TEXT');
     this.db.exec("UPDATE jobs SET archive_reason='manual', archive_seen_at=COALESCE(archive_seen_at, updated_at) WHERE status='archived' AND archive_reason IS NULL");
     this.db.exec("UPDATE jobs SET interview_stage='interview' WHERE status='interview' AND interview_stage IS NULL");
     const connectionColumns = this.db.prepare('PRAGMA table_info(ai_provider_connections)').all() as Array<{ name: string }>;
@@ -127,7 +129,7 @@ export class JobDatabase {
     }
     this.db.exec("UPDATE jobs SET status='archived', archive_reason=CASE WHEN EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id AND email_effects.automatic=1) THEN 'email_exact' ELSE 'email_review' END, archive_seen_at=updated_at WHERE status='result' AND result_outcome='rejected' AND EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id)");
   }
-  import(parsed: ParsedJob, raw: { html: string; text: string | null; collectorVersion: string; capturedAt: string }) {
+  import(parsed: ParsedJob, raw: { html: string; text: string | null; collectorVersion: string; capturedAt: string; pageTitle?: string }) {
     const now = new Date().toISOString();
     const existing = parsed.sourceJobId
       ? this.db.prepare('SELECT * FROM jobs WHERE source = ? AND source_job_id = ?').get(parsed.source, parsed.sourceJobId) as JobRow | undefined
@@ -144,7 +146,7 @@ export class JobDatabase {
       this.db.prepare(`INSERT INTO jobs (id,source,source_job_id,source_url,title,company,location,workplace_type,employment_type,description_html,description_text,status,notes,captured_at,created_at,updated_at,parse_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(jobId, parsed.source, parsed.sourceJobId ?? null, parsed.sourceUrl, parsed.title ?? null, parsed.company ?? null, parsed.location ?? null, parsed.workplaceType ?? null, parsed.employmentType ?? null, parsed.descriptionHtml ?? null, parsed.descriptionText ?? null, 'saved', '', raw.capturedAt, now, now, parsed.parseStatus);
       this.insertEvent(jobId, 'saved', now);
     }
-    this.db.prepare('INSERT INTO snapshots (id,job_id,source,source_url,content_type,raw_html,raw_text,collector_version,parser_version,parse_status,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, parsed.source, parsed.sourceUrl, 'job', raw.html, raw.text, raw.collectorVersion, parsed.parserVersion, parsed.parseStatus, raw.capturedAt, now);
+    this.db.prepare('INSERT INTO snapshots (id,job_id,source,source_url,content_type,page_title,raw_html,raw_text,collector_version,parser_version,parse_status,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, parsed.source, parsed.sourceUrl, 'job', raw.pageTitle ?? null, raw.html, raw.text, raw.collectorVersion, parsed.parserVersion, parsed.parseStatus, raw.capturedAt, now);
     return { jobId, action };
   }
   list(filters: { search?: string; status?: string; source?: string; tag?: string; order?: string; archive?: string }) {
@@ -280,7 +282,7 @@ export class JobDatabase {
   deleteTag(id: string) { return this.db.prepare('DELETE FROM tags WHERE id=?').run(id).changes > 0; }
   tagsForJob(id: string) { return this.db.prepare('SELECT tags.* FROM tags JOIN job_tags ON job_tags.tag_id=tags.id WHERE job_tags.job_id=? ORDER BY tags.name COLLATE NOCASE').all(id) as TagRow[]; }
   setTags(id: string, tagIds: string[]) { if (!this.get(id)) return undefined; const uniqueTagIds = [...new Set(tagIds)]; const existing = this.db.prepare(`SELECT id FROM tags WHERE id IN (${uniqueTagIds.map(() => '?').join(',') || "''"})`).all(...uniqueTagIds) as Array<{ id: string }>; if (existing.length !== uniqueTagIds.length) throw new Error('Unknown tag'); const transaction = this.db.transaction(() => { this.db.prepare('DELETE FROM job_tags WHERE job_id=?').run(id); const insert = this.db.prepare('INSERT INTO job_tags (job_id,tag_id) VALUES (?,?)'); uniqueTagIds.forEach(tagId => insert.run(id, tagId)); }); transaction(); return this.tagsForJob(id); }
-  latestSnapshot(id: string) { return this.db.prepare('SELECT * FROM snapshots WHERE job_id=? ORDER BY created_at DESC LIMIT 1').get(id) as { raw_html: string; raw_text: string | null; captured_at: string } | undefined; }
+  latestSnapshot(id: string) { return this.db.prepare('SELECT * FROM snapshots WHERE job_id=? ORDER BY created_at DESC LIMIT 1').get(id) as { source: string; source_url: string; page_title: string | null; raw_html: string; raw_text: string | null; captured_at: string } | undefined; }
   listConnections() { return (this.db.prepare('SELECT * FROM ai_provider_connections ORDER BY created_at DESC').all() as AiConnectionRow[]).map(this.publicConnection); }
   private publicConnection = ({ encrypted_api_key, email_requests_per_minute: _legacyEmailRequestsPerMinute, enabled, ...row }: AiConnectionRow): AiConnectionPublic => ({ ...row, enabled: Boolean(enabled), api_key_configured: Boolean(encrypted_api_key) });
   getConnection(id: string) { return this.db.prepare('SELECT * FROM ai_provider_connections WHERE id=?').get(id) as AiConnectionRow | undefined; }
