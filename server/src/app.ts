@@ -52,7 +52,7 @@ export function buildApp(config: AppConfig) {
     const countryLabel = (name: string | null, code: string | null) => { const flag = code && /^[A-Z]{2}$/i.test(code) ? String.fromCodePoint(...code.toUpperCase().split('').map(char => 127397 + char.charCodeAt(0))) : ''; return `${flag ? `${flag} ` : ''}${name || 'Не определено'}`; };
     let countedApplications = 0;
     for (const row of filteredRows) {
-      const groups = dimension === 'source' ? [{ label: row.source || 'Не указан', value: row.source || 'Не указан' }] : dimension === 'country' ? [{ label: countryLabel(row.geo_country, row.geo_country_code), value: row.geo_country || 'Не определено' }] : row.tags.length ? row.tags.filter(tag => !filters.tags.length || filters.tags.includes(tag.id)).map(tag => ({ label: tag.name, value: tag.id, color: tag.color })) : [{ label: 'Без тегов', value: '' }];
+      const groups: Array<{ label: string; value: string; color?: string }> = dimension === 'source' ? [{ label: row.source || 'Не указан', value: row.source || 'Не указан' }] : dimension === 'country' ? [{ label: countryLabel(row.geo_country, row.geo_country_code), value: row.geo_country || 'Не определено' }] : row.tags.length ? row.tags.filter(tag => !filters.tags.length || filters.tags.includes(tag.id)).map(tag => ({ label: tag.name, value: tag.id, color: tag.color })) : [{ label: 'Без тегов', value: '' }];
       for (const group of groups) {
         let latest: string | null = null;
         const advance = (next: string) => { if (latest) link(latest, next); else link(node(`${dimension}:${group.value || 'none'}`, group.label, 'category', group.value || undefined, group.color), next); latest = next; };
