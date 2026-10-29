@@ -599,9 +599,27 @@ function renderSankeyStats(stats: SankeyStats, scale: ApplicationStatsScale) {
   summary.innerHTML = stats.applications ? `<span class="font-semibold text-gray-900">${stats.applications}</span> уникальных откликов ${scaleName}${flowCoverage}${tagNote}` : `Отправленных заявок ${scaleName} нет.`;
   sankeyChart?.dispose(); sankeyChart = null; chartTarget.replaceChildren();
   if (!stats.nodes.length) { chartTarget.className = 'flex h-44 items-center justify-center text-sm text-gray-500'; chartTarget.textContent = 'Поток появится после первой отправленной заявки.'; return; }
-  chartTarget.className = 'h-[420px] min-w-[720px]'; sankeyChart = echarts.init(chartTarget, undefined, { renderer: 'svg' });
-  const nodeData = stats.nodes.map(node => ({ name: node.id, label_name: node.label, kind: node.kind, filter_value: node.filter_value, itemStyle: { color: sankeyNodeColor(node.kind, node.label, node.color), borderColor: '#ffffff', borderWidth: 1 } }));
-  sankeyChart.setOption({ tooltip: { trigger: 'item', backgroundColor: '#111827', borderWidth: 0, textStyle: { color: '#ffffff' }, formatter: (params: { dataType?: string; data: { label_name?: string; value?: number }; value?: number }) => `${escape(params.data.label_name ?? '')}<br><b>${params.data.value ?? params.value ?? 0}</b> вакансий` }, series: [{ type: 'sankey', data: nodeData, links: stats.links, left: 8, right: 130, top: 12, bottom: 12, nodeWidth: 14, nodeGap: 14, nodeAlign: 'justify', draggable: false, emphasis: { focus: 'adjacency' }, lineStyle: { color: 'source', curveness: 0.5, opacity: 0.34 }, label: { color: '#374151', fontSize: 12, formatter: (params: { data: { label_name?: string } }) => params.data.label_name ?? '' } }] });
+  const outgoing = new Map<string, number>(); const linkedSources = new Set<string>();
+  const stageNodes = new Set(stats.nodes.filter(node => node.kind === 'stage').map(node => node.id));
+  const categoriesWithProgress = new Set(stats.links.filter(link => stageNodes.has(link.target)).map(link => link.source));
+  // Keep the short, direct rejection routes in the upper lane. Interview stages
+  // deliberately occupy the lower part of their columns, so their branches read
+  // as a continuation rather than cutting through the rejection flow.
+  const stageVerticalPosition: Record<string, number> = {
+    'stage:hr': 0.60,
+    'stage:technical': 0.70,
+    'stage:final': 0.80,
+    'stage:follow-up': 0.89,
+  };
+  for (const link of stats.links) { outgoing.set(link.source, (outgoing.get(link.source) ?? 0) + link.value); linkedSources.add(link.source); }
+  const categoryCount = stats.nodes.filter(node => node.kind === 'category').length;
+  chartTarget.className = 'min-w-[900px]'; chartTarget.style.height = `${Math.min(720, Math.max(420, 112 + categoryCount * 52))}px`; sankeyChart = echarts.init(chartTarget, undefined, { renderer: 'svg' });
+  const nodeData = [...stats.nodes].sort((left, right) => {
+    if (left.kind !== 'category' || right.kind !== 'category') return 0;
+    const progressOrder = Number(categoriesWithProgress.has(left.id)) - Number(categoriesWithProgress.has(right.id));
+    return progressOrder || (outgoing.get(right.id) ?? 0) - (outgoing.get(left.id) ?? 0) || left.label.localeCompare(right.label, 'ru');
+  }).map(node => ({ name: node.id, label_name: node.label, kind: node.kind, filter_value: node.filter_value, localY: stageVerticalPosition[node.id], label: node.kind === 'stage' && !linkedSources.has(node.id) ? { position: 'left', align: 'right' } : undefined, itemStyle: { color: sankeyNodeColor(node.kind, node.label, node.color), borderColor: '#ffffff', borderWidth: 1 } }));
+  sankeyChart.setOption({ tooltip: { trigger: 'item', backgroundColor: '#111827', borderWidth: 0, textStyle: { color: '#ffffff' }, formatter: (params: { dataType?: string; data: { label_name?: string; value?: number }; value?: number }) => `${escape(params.data.label_name ?? '')}<br><b>${params.data.value ?? params.value ?? 0}</b> вакансий` }, series: [{ type: 'sankey', data: nodeData, links: stats.links, left: 8, right: 220, top: 16, bottom: 16, nodeWidth: 14, nodeGap: 18, nodeAlign: 'justify', draggable: false, emphasis: { focus: 'adjacency' }, lineStyle: { color: 'source', curveness: 0.5, opacity: 0.34 }, label: { color: '#374151', fontSize: 12, formatter: (params: { data: { label_name?: string } }) => params.data.label_name ?? '' } }] });
   sankeyChart.on('click', params => { const node = params.data as { kind?: string; filter_value?: string } | undefined; if (!node?.filter_value || node.kind !== 'category') return; if (sankeyState.dimension === 'source') setSankeyState({ ...sankeyState, sources: [node.filter_value] }); else if (sankeyState.dimension === 'country') setSankeyState({ ...sankeyState, countries: [node.filter_value] }); else setSankeyState({ ...sankeyState, tags: [node.filter_value] }); void loadSankeyStats(scale).catch(error => show(error.message, true)); });
 }
 function setStatsScale(scale: ApplicationStatsScale) {
