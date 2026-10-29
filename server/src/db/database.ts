@@ -162,7 +162,8 @@ export class JobDatabase {
     if (filters.status) { where.push('status = ?'); values.push(filters.status); }
     if (filters.source) { where.push('source = ?'); values.push(filters.source); }
     if (filters.tag) { where.push('EXISTS (SELECT 1 FROM job_tags WHERE job_tags.job_id=jobs.id AND job_tags.tag_id=?)'); values.push(filters.tag); }
-    if (filters.country) { where.push('geo_country_code = ?'); values.push(filters.country.toUpperCase()); }
+    if (filters.country === '__unknown__') where.push("(geo_country IS NULL OR TRIM(geo_country) = '')");
+    else if (filters.country) { where.push('geo_country_code = ?'); values.push(filters.country.toUpperCase()); }
     if (filters.archive === 'only') where.push("status = 'archived'");
     else where.push("status != 'archived'");
     const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: 'jobs.updated_at DESC', company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: 'jobs.title COLLATE NOCASE ASC', waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
