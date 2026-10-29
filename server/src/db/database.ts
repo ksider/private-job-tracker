@@ -156,14 +156,19 @@ export class JobDatabase {
     this.db.prepare('INSERT INTO snapshots (id,job_id,source,source_url,content_type,page_title,raw_html,raw_text,collector_version,parser_version,parse_status,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, parsed.source, parsed.sourceUrl, 'job', raw.pageTitle ?? null, raw.html, raw.text, raw.collectorVersion, parsed.parserVersion, parsed.parseStatus, raw.capturedAt, now);
     return { jobId, action };
   }
-  list(filters: { search?: string; status?: string; source?: string; tag?: string; country?: string; order?: string; archive?: string }) {
+  list(filters: { search?: string; status?: string; source?: string; tag?: string; country?: string | string[]; order?: string; archive?: string }) {
     const where: string[] = []; const values: unknown[] = [];
     if (filters.search) { where.push('(title LIKE ? OR company LIKE ?)'); values.push(`%${filters.search}%`, `%${filters.search}%`); }
     if (filters.status) { where.push('status = ?'); values.push(filters.status); }
     if (filters.source) { where.push('source = ?'); values.push(filters.source); }
     if (filters.tag) { where.push('EXISTS (SELECT 1 FROM job_tags WHERE job_tags.job_id=jobs.id AND job_tags.tag_id=?)'); values.push(filters.tag); }
-    if (filters.country === '__unknown__') where.push("(geo_country IS NULL OR TRIM(geo_country) = '')");
-    else if (filters.country) { where.push('geo_country_code = ?'); values.push(filters.country.toUpperCase()); }
+    const countries = [...new Set((Array.isArray(filters.country) ? filters.country : filters.country ? [filters.country] : []).map(country => country.trim()).filter(Boolean))];
+    if (countries.length) {
+      const alternatives: string[] = []; const codes = countries.filter(country => country !== '__unknown__');
+      if (countries.includes('__unknown__')) alternatives.push("geo_country_code IS NULL OR TRIM(geo_country_code) = ''");
+      if (codes.length) { alternatives.push(`geo_country_code IN (${codes.map(() => '?').join(',')})`); values.push(...codes.map(country => country.toUpperCase())); }
+      where.push(`(${alternatives.join(' OR ')})`);
+    }
     if (filters.archive === 'only') where.push("status = 'archived'");
     else where.push("status != 'archived'");
     const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: 'jobs.updated_at DESC', company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: 'jobs.title COLLATE NOCASE ASC', waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
@@ -183,6 +188,7 @@ export class JobDatabase {
       (SELECT job_description_hash FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_job_hash
       FROM jobs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`).all(...values) as JobRow[];
   }
+  countryFilters() { return this.db.prepare("SELECT geo_country AS name, geo_country_code AS code FROM jobs WHERE status != 'archived' GROUP BY geo_country, geo_country_code ORDER BY COALESCE(geo_country, '') COLLATE NOCASE ASC").all() as Array<{ name: string | null; code: string | null }>; }
   geographyBackfillCandidates(options: { includeArchived?: boolean; limit?: number } = {}) {
     const archiveClause = options.includeArchived ? '' : "AND status != 'archived'";
     const limit = Math.max(1, Math.min(options.limit ?? 10_000, 100_000));
