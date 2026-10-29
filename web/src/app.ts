@@ -298,9 +298,6 @@ function renderViewControls() {
     countryOptions.querySelector<HTMLButtonElement>('[data-filter-country-all]')!.onclick = () => { viewState.countries = []; void loadJobs().catch(error => show(error.message, true)); };
     countryOptions.querySelectorAll<HTMLButtonElement>('[data-filter-country]').forEach(button => button.onclick = () => { const value = button.dataset.filterCountry!; viewState.countries = viewState.countries.includes(value) ? viewState.countries.filter(country => country !== value) : [...viewState.countries, value]; void loadJobs().catch(error => show(error.message, true)); });
   };
-  countrySearch.onfocus = renderCountryOptions;
-  countrySearch.oninput = renderCountryOptions;
-  countrySearch.onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); closeViewMenus(); } };
   $('#clear-compact-countries').onclick = () => { viewState.countries = []; countrySearch.value = ''; void loadJobs().catch(error => show(error.message, true)); };
   const tagSearch = $('#compact-tag-search') as HTMLInputElement;
   const tagOptions = $('#compact-tag-options');
@@ -311,8 +308,15 @@ function renderViewControls() {
     tagOptions.classList.remove('hidden');
     tagOptions.querySelectorAll<HTMLButtonElement>('[data-filter-tag]').forEach(button => button.onclick = () => { viewState.tag = button.dataset.filterTag ?? ''; closeViewMenus(); void loadJobs().catch(error => show(error.message, true)); });
   };
-  tagSearch.onfocus = renderTagOptions;
-  tagSearch.oninput = renderTagOptions;
+  const countryPicker = countryOptions.parentElement!; const tagPicker = tagOptions.parentElement!;
+  const closeCountryPicker = () => countryOptions.classList.add('hidden'); const closeTagPicker = () => tagOptions.classList.add('hidden');
+  countrySearch.onfocus = () => { closeTagPicker(); renderCountryOptions(); };
+  countrySearch.oninput = () => { closeTagPicker(); renderCountryOptions(); };
+  countrySearch.onblur = () => window.setTimeout(() => { if (!countryPicker.contains(document.activeElement)) closeCountryPicker(); }, 0);
+  countrySearch.onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); closeViewMenus(); } };
+  tagSearch.onfocus = () => { closeCountryPicker(); renderTagOptions(); };
+  tagSearch.oninput = () => { closeCountryPicker(); renderTagOptions(); };
+  tagSearch.onblur = () => window.setTimeout(() => { if (!tagPicker.contains(document.activeElement)) closeTagPicker(); }, 0);
   tagSearch.onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); closeViewMenus(); } };
   $('#clear-compact-tag').onclick = () => { viewState.tag = ''; tagSearch.value = ''; tagOptions.classList.add('hidden'); closeViewMenus(); void loadJobs().catch(error => show(error.message, true)); };
   $('#clear-filters').onclick = () => { viewState.search = ''; viewState.status = ''; viewState.source = ''; viewState.tag = ''; viewState.countries = []; ($('#search') as HTMLInputElement).value = ''; closeViewMenus(); void loadJobs().catch(error => show(error.message, true)); };
