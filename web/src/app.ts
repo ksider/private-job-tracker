@@ -558,7 +558,7 @@ function sankeyNodeColor(kind: SankeyNode['kind'], label: string, color?: string
   if (color) return color;
   if (kind === 'category') return '#2563eb';
   if (kind === 'outcome') return label === 'Оффер' ? '#059669' : label === 'Отказ' ? '#dc2626' : '#64748b';
-  return label === 'HR' ? '#7c3aed' : '#4f46e5';
+  return label === 'HR-скрининг' ? '#7c3aed' : label === 'Техническое интервью' ? '#4f46e5' : label === 'Финальное интервью' ? '#be123c' : '#0284c7';
 }
 const sankeyDimensionLabel = (dimension: SankeyDimension) => ({ source: 'Источники', tag: 'Теги', country: 'Страны' }[dimension]);
 function sankeyFilterSummary() {

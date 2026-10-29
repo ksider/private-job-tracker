@@ -5,7 +5,7 @@ import type { MatchClassification, MatchResult, ProviderType } from '../ai/schem
 export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: string; title?: string; company?: string; location?: string; workplaceType?: string; employmentType?: string; descriptionHtml?: string; descriptionText?: string; easyApply?: boolean; warnings: string[]; parseStatus: 'parsed' | 'partial' | 'parse_failed'; parserVersion: string };
 export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; geo_source: 'ai' | 'manual' | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; parse_status: string; last_event_at: string; stage_started_at: string };
 export type ApplicationEffectivenessRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; result_outcome: JobRow['result_outcome']; applied_at: string; response_at: string | null; ai_classification: MatchClassification | null; tags: string[] };
-export type ApplicationSankeyRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; result_outcome: JobRow['result_outcome']; applied_at: string; reached_hr: number; reached_interview: number; tags: Array<{ id: string; name: string; color: string }> };
+export type ApplicationSankeyRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; result_outcome: JobRow['result_outcome']; applied_at: string; reached_hr: number; reached_technical: number; reached_final: number; reached_follow_up: number; tags: Array<{ id: string; name: string; color: string }> };
 export type CohortApplicationRow = { id: string; applied_at: string; application_date_source: 'applied_event' | 'created_at'; first_response_event_at: string | null; first_response_email_at: string | null; first_hr_event_at: string | null; first_hr_email_at: string | null; has_undated_hr_progression: number };
 export type JobEventRow = { id: string; job_id: string; type: JobEventType; occurred_at: string; note: string; created_at: string };
 export type InterviewAppointmentStatus = 'proposed' | 'confirmed' | 'cancelled';
@@ -249,11 +249,14 @@ export class JobDatabase {
       UNION ALL
       SELECT jobs.id, COALESCE((SELECT MIN(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up')), jobs.created_at)
       FROM jobs
-      WHERE (jobs.status IN ('sent', 'interview', 'result') OR jobs.result_outcome IS NOT NULL)
+      WHERE (jobs.status IN ('sent', 'interview', 'result') OR jobs.result_outcome IS NOT NULL
+        OR (jobs.status='archived' AND EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up'))))
         AND NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
-    ) SELECT jobs.id, jobs.source, jobs.geo_country_code, jobs.geo_country, jobs.result_outcome, applications.applied_at,
+    ) SELECT jobs.id, jobs.source, jobs.geo_country_code, jobs.geo_country, CASE WHEN jobs.result_outcome IS NOT NULL THEN jobs.result_outcome WHEN jobs.status='archived' THEN 'rejected' ELSE NULL END AS result_outcome, applications.applied_at,
       CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='hr_screening' AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_hr,
-      CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('interview','final_interview','follow_up') AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_interview
+      CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='interview' AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_technical,
+      CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='final_interview' AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_final,
+      CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='follow_up' AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_follow_up
       FROM jobs JOIN applications ON applications.job_id=jobs.id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`).all(...values) as Array<Omit<ApplicationSankeyRow, 'tags'>>;
     const tagsByJob = new Map<string, Array<{ id: string; name: string; color: string }>>();
     if (rows.length) {
