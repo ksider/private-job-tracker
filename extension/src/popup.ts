@@ -15,6 +15,17 @@ async function collect(tabId: number): Promise<CollectorResult> {
   const frames = await chrome.scripting.executeScript({ target: { tabId, allFrames: collectorSource === 'generic' }, world: 'ISOLATED', func: (initialSource) => {
     // Passive read only: no fetch, click, events, focus, scrolling, observer, or DOM writes.
     const select = (...items: string[]) => items.map(item => document.querySelector(item)).find(Boolean) as Element | undefined;
+    const copyOf = (snapshot: HTMLElement, element: Element | undefined) => {
+      if (!element) return undefined;
+      const path: number[] = [];
+      for (let node: Element | null = element; node && node !== document.body; node = node.parentElement) {
+        const parent = node.parentElement; if (!parent) return undefined;
+        const index = [...parent.children].indexOf(node); if (index < 0) return undefined;
+        path.push(index);
+      }
+      return path.reverse().reduce<Element | undefined>((node, index) => node?.children[index], snapshot);
+    };
+    const wrapFullPage = (sourceName: string, snapshot: HTMLElement) => `<section data-snapshot-section="${sourceName}-page">${snapshot.innerHTML}</section>`;
     const copy = document.implementation.createHTMLDocument('snapshot'); let html = ''; let selectedTextLength = 0; const warnings: string[] = [];
     const successFactors = Boolean(select('.jobDisplayShell', '#job-company', '#job-location', '.jobdescription'));
     const workday = Boolean(select('[data-automation-id="jobPostingPage"]', '[data-automation-id="jobPostingHeader"]', '[data-automation-id="jobPostingDescription"]'));
@@ -35,56 +46,53 @@ async function collect(tabId: number): Promise<CollectorResult> {
       // detached page so a later parser can recover fields that today's selectors miss.
       // The source page itself is never changed.
       const snapshot = document.body.cloneNode(true) as HTMLElement;
-      const cloneOf = (element: Element | undefined) => {
-        if (!element) return undefined;
-        const path: number[] = [];
-        for (let node: Element | null = element; node && node !== document.body; node = node.parentElement) {
-          const parent = node.parentElement; if (!parent) return undefined;
-          const index = [...parent.children].indexOf(node); if (index < 0) return undefined;
-          path.push(index);
-        }
-        return path.reverse().reduce<Element | undefined>((node, index) => node?.children[index], snapshot);
-      };
-      const snapshotHeader = cloneOf(selectedCardElement ?? header ?? undefined);
-      const snapshotDescription = cloneOf(description);
+      const snapshotHeader = copyOf(snapshot, selectedCardElement ?? header ?? undefined);
+      const snapshotDescription = copyOf(snapshot, description);
       snapshotHeader?.setAttribute('data-snapshot-section', 'header');
       snapshotDescription?.setAttribute('data-snapshot-section', 'description');
-      html = `<section data-snapshot-section="linkedin-page">${snapshot.innerHTML}</section>`;
+      html = wrapFullPage('linkedin', snapshot);
       if (easyApply) html += '<span data-snapshot-section="easy-apply">Easy Apply</span>';
       if (!description) warnings.push('Job description heading is not visible. The complete page was saved; open the description and save again for a focused parse.');
       if (!header) warnings.push('Job header was not located; the backend will use the page title where possible.');
     } else if (source === 'successfactors') {
-      const job = select('.jobDisplayShell') ?? select('#job-title')?.parentElement; html = job?.outerHTML ?? '';
+      const job = select('.jobDisplayShell') ?? select('#job-title')?.parentElement ?? undefined;
+      const snapshot = document.body.cloneNode(true) as HTMLElement;
+      copyOf(snapshot, job)?.setAttribute('data-snapshot-section', 'successfactors-job');
+      html = wrapFullPage('successfactors', snapshot);
       if (!job) warnings.push('SuccessFactors job details are not visible. Open the vacancy page fully and save again.');
     } else if (source === 'workday') {
       const page = select('[data-automation-id="jobPostingPage"]');
-      const snapshot = page?.cloneNode(true) as Element | undefined;
+      const snapshot = document.body.cloneNode(true) as HTMLElement;
       const mark = (selector: string, attribute: string) => snapshot?.querySelector(selector)?.setAttribute(attribute, '');
       mark('[data-automation-id="jobPostingHeader"], [data-automation-id="jobPostingTitle"]', 'data-job-title');
       mark('[data-automation-id="job-posting-details"] [data-automation-id="locations"], [data-automation-id="locations"]', 'data-job-location');
       snapshot?.querySelector('[data-automation-id="jobPostingDescription"]')?.setAttribute('data-snapshot-section', 'workday-description');
       mark('[data-automation-id="jobSidebar"] [data-automation-id="richText"]', 'data-company-name');
-      html = snapshot?.outerHTML ?? '';
+      copyOf(snapshot, page)?.setAttribute('data-snapshot-section', 'workday-job');
+      html = wrapFullPage('workday', snapshot);
       if (!page) warnings.push('Workday job details are not visible. Open the vacancy page fully and save again.');
     } else if (source === 'greenhouse') {
       const job = select('.job-post-container', '.job-post');
-      html = job?.outerHTML ?? '';
+      const snapshot = document.body.cloneNode(true) as HTMLElement;
+      copyOf(snapshot, job)?.setAttribute('data-snapshot-section', 'greenhouse-job');
+      html = wrapFullPage('greenhouse', snapshot);
       if (!job) warnings.push('Greenhouse job details are not visible. Open the vacancy page fully and save again.');
     } else if (source === 'smartrecruiters') {
       const job = select('main.jobad-main.job', 'main[itemtype="http://schema.org/JobPosting"]');
-      const snapshot = job?.cloneNode(true) as Element | undefined;
+      const snapshot = document.body.cloneNode(true) as HTMLElement;
       const value = (selector: string, attribute?: string) => {
         const element = job?.querySelector(selector);
         return (attribute ? element?.getAttribute(attribute) : element?.textContent)?.replace(/\s+/g, ' ').trim() || undefined;
       };
-      const metadata = document.createElement('div');
+      const metadata = snapshot.ownerDocument.createElement('div');
       const mark = (attribute: string, field: string | undefined) => { if (field) metadata.setAttribute(attribute, field); };
       mark('data-company-name', value('[itemprop="hiringOrganization"] meta[itemprop="name"]', 'content'));
       mark('data-job-location', value('spl-job-location', 'formattedaddress') ?? value('[itemprop="jobLocation"]'));
       mark('data-employment-type', value('[itemprop="employmentType"]'));
       mark('data-workplace-type', value('spl-job-location', 'workplacetype'));
-      snapshot?.prepend(metadata);
-      html = snapshot?.outerHTML ?? '';
+      snapshot.prepend(metadata);
+      copyOf(snapshot, job)?.setAttribute('data-snapshot-section', 'smartrecruiters-job');
+      html = wrapFullPage('smartrecruiters', snapshot);
       if (!job) warnings.push('SmartRecruiters job details are not visible. Open the vacancy page fully and save again.');
     } else {
       const selection = window.getSelection();
@@ -95,7 +103,7 @@ async function collect(tabId: number): Promise<CollectorResult> {
     copy.body.innerHTML = html;
     copy.querySelectorAll('script,iframe,form,input,button,textarea,select,video,audio,img,link,style,object,embed,meta').forEach(element => element.remove());
     copy.querySelectorAll('*').forEach(element => [...element.attributes].forEach(attribute => { if (attribute.name.startsWith('on') || ['src', 'srcset', 'action', 'formaction'].includes(attribute.name) || (attribute.name === 'href' && !/^(https?:|mailto:|#|\/)/.test(attribute.value))) element.removeAttribute(attribute.name); }));
-    const clean = copy.body.innerHTML.slice(0, 1_000_000);
+    const clean = copy.body.innerHTML.slice(0, 5_000_000);
     const easyApply = source === 'linkedin' && copy.querySelector('[data-snapshot-section="easy-apply"]') !== null;
     return { capture: { snapshot: { schema_version: 1, source, content_type: 'job', url: location.href, page_title: document.title, captured_at: new Date().toISOString(), snapshot: { format: 'html', html: clean, text: copy.body.textContent?.replace(/\s+/g, ' ').trim() || null }, metadata: { collector_version: source === 'linkedin' ? '1.4.0' : '1.3.0', easy_apply: easyApply } }, warnings, preview: (copy.body.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 300) }, selectedTextLength };
   }, args: [collectorSource] });

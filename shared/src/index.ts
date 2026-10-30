@@ -19,7 +19,7 @@ export const SnapshotSchema = z.object({
   captured_at: z.string().datetime(),
   snapshot: z.object({
     format: z.literal('html'),
-    html: z.string().max(1_000_000),
+    html: z.string().max(5_000_000),
     text: z.string().max(500_000).nullable().optional()
   }),
   metadata: z.object({ collector_version: z.string().max(40) }).passthrough().default({ collector_version: 'unknown' })

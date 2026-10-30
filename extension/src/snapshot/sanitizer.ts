@@ -8,5 +8,5 @@ export function sanitizeFragment(html: string) {
       if (name.startsWith('on') || ['src', 'srcset', 'action', 'formaction'].includes(name) || (name === 'href' && !/^(https?:|mailto:|#|\/)/.test(value))) element.removeAttribute(attribute.name);
     });
   });
-  return documentCopy.body.innerHTML.slice(0, 1_000_000);
+  return documentCopy.body.innerHTML.slice(0, 5_000_000);
 }
