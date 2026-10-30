@@ -9,6 +9,7 @@ export const MatchRequestSchema = z.object({ connection_id: z.string().uuid().op
 export const TagSuggestionsRequestSchema = z.object({ connection_id: z.string().uuid().optional(), model: z.string().trim().max(200).optional() });
 export const GenericParseRequestSchema = z.object({ connection_id: z.string().uuid().optional(), model: z.string().trim().max(200).optional() });
 export const LocationNormalizeRequestSchema = z.object({ model: z.string().trim().max(200).optional() });
+export const StrategyRequestSchema = z.object({ connection_id: z.string().uuid() });
 export const TagSuggestionsResultSchema = z.object({ tag_ids: z.array(z.string().uuid()).max(20).default([]), new_tags: z.array(z.string().trim().min(1).max(60)).max(20).default([]) });
 const GenericParseTextSchema = z.string().trim().max(500).nullable().optional().catch(null).transform(value => value || null);
 export const GenericParseResultSchema = z.object({
@@ -47,3 +48,11 @@ export const MatchMatrixSchema = z.object({
 });
 export type MatchMatrix = z.infer<typeof MatchMatrixSchema>;
 export type MatchResult = MatchMatrix;
+
+const StrategyTextSchema = z.string().trim().min(1).max(500);
+export const StrategyAdviceSchema = z.object({
+  headline: StrategyTextSchema,
+  actions: z.array(StrategyTextSchema).min(1).max(3),
+  caveat: StrategyTextSchema,
+});
+export type StrategyAdvice = z.infer<typeof StrategyAdviceSchema>;
