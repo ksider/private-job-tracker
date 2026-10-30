@@ -138,16 +138,24 @@ export class JobDatabase {
   }
   import(parsed: ParsedJob, raw: { html: string; text: string | null; collectorVersion: string; capturedAt: string; pageTitle?: string }) {
     const now = new Date().toISOString();
-    const existing = parsed.sourceJobId
+    const existingBySourceId = parsed.sourceJobId
       ? this.db.prepare('SELECT * FROM jobs WHERE source = ? AND source_job_id = ?').get(parsed.source, parsed.sourceJobId) as JobRow | undefined
-      : this.db.prepare('SELECT * FROM jobs WHERE source_url = ? AND source_job_id IS NULL').get(parsed.sourceUrl) as JobRow | undefined;
+      : undefined;
+    // LinkedIn's current search view uses ?currentJobId= rather than /jobs/view/:id.
+    // Older cards captured before that identifier was supported have no source_job_id;
+    // prefer that legacy card so a re-save enriches it instead of creating a twin.
+    const legacyLinkedIn = parsed.source === 'linkedin' && parsed.sourceJobId
+      ? this.db.prepare("SELECT * FROM jobs WHERE source='linkedin' AND source_job_id IS NULL AND source_url LIKE ? ORDER BY created_at ASC LIMIT 1").get(`%currentJobId=${parsed.sourceJobId}%`) as JobRow | undefined
+      : undefined;
+    const existing = legacyLinkedIn ?? existingBySourceId ?? this.db.prepare('SELECT * FROM jobs WHERE source_url = ? AND source_job_id IS NULL').get(parsed.sourceUrl) as JobRow | undefined;
     let jobId: string; let action: 'created' | 'updated' | 'unchanged';
     const comparable = JSON.stringify([parsed.title ?? null, parsed.company ?? null, parsed.location ?? null, parsed.workplaceType ?? null, parsed.employmentType ?? null, parsed.descriptionHtml ?? null, parsed.descriptionText ?? null, parsed.parseStatus]);
     if (existing) {
       jobId = existing.id;
       const prior = JSON.stringify([existing.title, existing.company, existing.location, existing.workplace_type, existing.employment_type, existing.description_html, existing.description_text, existing.parse_status]);
       action = prior === comparable ? 'unchanged' : 'updated';
-      if (action === 'updated') this.db.prepare(`UPDATE jobs SET source=?, source_url=?, title=?, company=?, location=?, workplace_type=?, employment_type=?, description_html=?, description_text=?, captured_at=?, updated_at=?, parse_status=? WHERE id=?`).run(parsed.source, parsed.sourceUrl, parsed.title ?? null, parsed.company ?? null, parsed.location ?? null, parsed.workplaceType ?? null, parsed.employmentType ?? null, parsed.descriptionHtml ?? null, parsed.descriptionText ?? null, raw.capturedAt, now, parsed.parseStatus, jobId);
+      const needsSourceId = Boolean(parsed.sourceJobId && existing.source_job_id !== parsed.sourceJobId);
+      if (action === 'updated' || needsSourceId) this.db.prepare(`UPDATE jobs SET source=?, source_job_id=COALESCE(?, source_job_id), source_url=?, title=?, company=?, location=?, workplace_type=?, employment_type=?, description_html=?, description_text=?, captured_at=?, updated_at=?, parse_status=? WHERE id=?`).run(parsed.source, parsed.sourceJobId ?? null, parsed.sourceUrl, parsed.title ?? null, parsed.company ?? null, parsed.location ?? null, parsed.workplaceType ?? null, parsed.employmentType ?? null, parsed.descriptionHtml ?? null, parsed.descriptionText ?? null, raw.capturedAt, now, parsed.parseStatus, jobId);
     } else {
       jobId = crypto.randomUUID(); action = 'created';
       this.db.prepare(`INSERT INTO jobs (id,source,source_job_id,source_url,title,company,location,workplace_type,employment_type,description_html,description_text,status,notes,captured_at,created_at,updated_at,parse_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(jobId, parsed.source, parsed.sourceJobId ?? null, parsed.sourceUrl, parsed.title ?? null, parsed.company ?? null, parsed.location ?? null, parsed.workplaceType ?? null, parsed.employmentType ?? null, parsed.descriptionHtml ?? null, parsed.descriptionText ?? null, 'saved', '', raw.capturedAt, now, now, parsed.parseStatus);
