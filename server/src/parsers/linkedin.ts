@@ -25,7 +25,8 @@ export class LinkedInParser implements SourceParser {
   readonly source = 'linkedin'; readonly version = '1.0.0';
   canParse(snapshot: PageSnapshot) { return snapshot.source === this.source || new URL(snapshot.url).hostname.endsWith('linkedin.com'); }
   parse(snapshot: PageSnapshot): ParsedJob {
-    const $ = cheerio.load(snapshot.snapshot.html); const sourceJobId = snapshot.url.match(/\/jobs\/view\/(\d+)/)?.[1];
+    const $ = cheerio.load(snapshot.snapshot.html);
+    const sourceJobId = snapshot.url.match(/\/jobs\/view\/(\d+)/)?.[1] ?? new URL(snapshot.url).searchParams.get('currentJobId') ?? undefined;
     const header = text($, ['[data-snapshot-section="header"]']);
     // Easy Apply is a LinkedIn UI attribute, not a vacancy requirement. Restrict the
     // legacy fallback to the header so prose in the job description cannot add the tag.
