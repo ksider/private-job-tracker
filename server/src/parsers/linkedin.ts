@@ -6,6 +6,10 @@ import type { SourceParser } from './types.js';
 const text = ($: cheerio.CheerioAPI, selectors: string[]) => { for (const selector of selectors) { const found = $(selector).first().text().replace(/\s+/g, ' ').trim(); if (found) return found; } return undefined; };
 const titleFromPageTitle = (pageTitle: string) => pageTitle.split('|')[0]?.trim() || undefined;
 const companyFromPageTitle = (pageTitle: string) => pageTitle.split('|').map(value => value.trim())[1] || undefined;
+const titleFromSelectedHeader = (header: string | undefined) => {
+  const match = header?.match(/^selected[,:]\s*(.+?)\s+\1(?:\s|$)/i);
+  return match?.[1]?.trim() || undefined;
+};
 const EasyApplyButtonLabel = /^easy\s+apply(?:\s+to\s+(?:this\s+)?job)?$/i;
 export const hasLinkedInEasyApplySignal = (html: string) => {
   const $ = cheerio.load(html);
@@ -26,7 +30,7 @@ export class LinkedInParser implements SourceParser {
     // Easy Apply is a LinkedIn UI attribute, not a vacancy requirement. Restrict the
     // legacy fallback to the header so prose in the job description cannot add the tag.
     const easyApply = $('[data-snapshot-section="easy-apply"]').length > 0 || /\beasy\s+apply\b/i.test(header ?? '');
-    const title = text($, ['[data-job-title]', '.job-details-jobs-unified-top-card__job-title', 'h1']) ?? titleFromPageTitle(snapshot.page_title);
+    const title = text($, ['[data-job-title]', '.job-details-jobs-unified-top-card__job-title', 'h1']) ?? titleFromSelectedHeader(header) ?? titleFromPageTitle(snapshot.page_title);
     const company = text($, ['[data-company-name]', '.job-details-jobs-unified-top-card__company-name', '.topcard__org-name-link', '[data-snapshot-section="header"] a[href*="/company/"]']) ?? companyFromPageTitle(snapshot.page_title);
     const location = text($, ['[data-job-location]', '.job-details-jobs-unified-top-card__bullet', '.topcard__flavor--bullet']) ?? headerLocation(header, title, company);
     const description = $('[data-snapshot-section="description"], [id^="JobDetails_AboutTheJob_"], [data-job-description], .jobs-description__content, .description__text, .jobs-box__html-content').first();
