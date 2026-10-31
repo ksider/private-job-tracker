@@ -10,8 +10,29 @@ import { calculateCohortAnalytics } from './analytics/cohorts.js';
 
 export type AppConfig = { databasePath: string; apiToken: string; webRoot?: string; profilePath?: string; aiSecretsKey?: string };
 const here = path.dirname(fileURLToPath(import.meta.url));
+const slowApiRequestMs = 500;
+const apiRequestStartedAt = new WeakMap<object, bigint>();
+const clientRequestId = (headers: Record<string, string | string[] | undefined>) => {
+  const value = headers['x-client-request-id']; const candidate = Array.isArray(value) ? value[0] : value;
+  return candidate && /^[a-zA-Z0-9_-]{1,80}$/.test(candidate) ? candidate : undefined;
+};
 export function buildApp(config: AppConfig) {
   const app = Fastify({ logger: true, bodyLimit: 5_100_000 }); const db = new JobDatabase(config.databasePath); const registry = new ParserRegistry(); const providers = new ProviderRegistry(); const secrets = new SecretStore(config.aiSecretsKey ?? config.apiToken); const uploadedProfilePath = config.databasePath === ':memory:' ? undefined : path.join(path.dirname(config.databasePath), 'candidate-profile.json'); const profiles = new ProfileLoader(config.profilePath ?? path.resolve(here, '../../.ai/nikolai_semenov_master_profile_v1.json'), uploadedProfilePath);
+  app.addHook('onRequest', async (request, reply) => {
+    if (!request.url.startsWith('/api/')) return;
+    apiRequestStartedAt.set(request, process.hrtime.bigint());
+    reply.header('x-request-id', request.id);
+    const id = clientRequestId(request.headers);
+    if (id) reply.header('x-client-request-id', id);
+  });
+  app.addHook('onResponse', async (request, reply) => {
+    if (!request.url.startsWith('/api/')) return;
+    const startedAt = apiRequestStartedAt.get(request); if (!startedAt) return;
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    if (durationMs < slowApiRequestMs) return;
+    const contentLength = reply.getHeader('content-length');
+    request.log.warn({ clientRequestId: clientRequestId(request.headers), method: request.method, url: request.url, statusCode: reply.statusCode, durationMs: Math.round(durationMs), responseBytes: typeof contentLength === 'string' || typeof contentLength === 'number' ? Number(contentLength) : undefined }, 'slow API response');
+  });
   const emailSync = new EmailSyncService(db, providers, secrets); const emailScheduler = new EmailSyncScheduler(emailSync, db); const backupSync = new GoogleSheetsSyncService(db, secrets); const backupScheduler = new BackupScheduler(backupSync, db);
   const analysisView = (analysis: ReturnType<JobDatabase['latestAnalysis']>, currentProfile?: LoadedProfile, descriptionText?: string | null) => {
     if (!analysis) return null;
@@ -126,13 +147,13 @@ export function buildApp(config: AppConfig) {
   app.options('/*', async (request, reply) => {
     const origin = request.headers.origin;
     if (!extensionOrigin(origin)) return reply.code(403).send({ error: 'Extension origin required' });
-    return reply.headers({ 'access-control-allow-origin': origin!, 'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'access-control-allow-headers': 'authorization,content-type', 'access-control-max-age': '600', vary: 'Origin' }).code(204).send();
+    return reply.headers({ 'access-control-allow-origin': origin!, 'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'access-control-allow-headers': 'authorization,content-type,x-client-request-id', 'access-control-expose-headers': 'x-request-id,x-client-request-id', 'access-control-max-age': '600', vary: 'Origin' }).code(204).send();
   });
   app.addHook('onSend', async (request, reply) => {
     // Asset names are stable during local development; force a normal reload to
     // retrieve the latest compiled UI instead of requiring cache-busting reloads.
     if (request.url.startsWith('/assets/')) reply.header('cache-control', 'no-store');
-    const origin = request.headers.origin; if (extensionOrigin(origin)) reply.headers({ 'access-control-allow-origin': origin!, vary: 'Origin' });
+    const origin = request.headers.origin; if (extensionOrigin(origin)) reply.headers({ 'access-control-allow-origin': origin!, 'access-control-expose-headers': 'x-request-id,x-client-request-id', vary: 'Origin' });
   });
   const bearer = (request: { headers: { authorization?: string } }) => request.headers.authorization === `Bearer ${config.apiToken}`;
   app.get('/api/health', async (request, reply) => {
@@ -148,7 +169,12 @@ export function buildApp(config: AppConfig) {
     if (result.action === 'created') void runImportAutomation(result.jobId);
     return { success: true, job_id: result.jobId, action: result.action, parser: parser.source, warnings: parsed.warnings };
   });
-  app.get('/api/jobs', async request => { const profile = await profiles.load().catch(() => undefined); return db.list(request.query as { search?: string; status?: string; source?: string; tag?: string; country?: string | string[]; order?: string; archive?: string }).map(job => ({ ...jobView(job), tags: db.tagsForJob(job.id), ai_match: analysisView(db.latestAnalysis(job.id), profile, job.description_text) })); });
+  app.get('/api/jobs', async request => {
+    const listed = db.list(request.query as { search?: string; status?: string; source?: string; tag?: string; country?: string | string[]; order?: string; archive?: string }); const ids = listed.map(job => job.id);
+    const tags = db.tagsForJobs(ids); const nextInterviews = db.nextAppointmentsForJobs(ids); const analyses = db.latestAnalysesForJobs(ids); const profile = await profiles.load().catch(() => undefined);
+    return listed.map(job => ({ ...job, next_interview: nextInterviews.get(job.id) ?? null, tags: tags.get(job.id) ?? [], ai_match: analysisView(analyses.get(job.id), profile, job.description_text) }));
+  });
+  app.get('/api/jobs/options', async () => db.jobOptions());
   app.get('/api/jobs/countries', async () => db.countryFilters());
   app.get('/api/jobs/:id', async (request, reply) => { const id = (request.params as { id: string }).id; const job = db.get(id); const profile = await profiles.load().catch(() => undefined); return job ? { ...jobView(job), tags: db.tagsForJob(id), description_html: safeDescriptionHtml(job.description_html), events: db.events(id), appointments: db.appointments(id), ai_match: analysisView(db.latestAnalysis(id), profile, job.description_text) } : reply.code(404).send({ error: 'Job not found' }); });
   app.patch('/api/jobs/:id', async (request, reply) => { const checked = JobPatchSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid job update', details: checked.error.flatten() }); const job = db.update((request.params as { id: string }).id, checked.data); return job ?? reply.code(404).send({ error: 'Job not found' }); });

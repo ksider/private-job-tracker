@@ -64,7 +64,8 @@ export class JobDatabase {
         profile_hash TEXT NOT NULL, job_description_hash TEXT NOT NULL, prompt_version TEXT NOT NULL,
         classification TEXT, result_json TEXT, status TEXT NOT NULL, error_message TEXT,
         created_at TEXT NOT NULL, completed_at TEXT);
-      CREATE INDEX IF NOT EXISTS job_match_analyses_job_date ON job_match_analyses(job_id, created_at DESC);`);
+      CREATE INDEX IF NOT EXISTS job_match_analyses_job_date ON job_match_analyses(job_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS job_match_analyses_job_completed ON job_match_analyses(job_id, status, completed_at DESC);`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS ai_strategy_analyses (
       id TEXT PRIMARY KEY, provider_connection_id TEXT REFERENCES ai_provider_connections(id) ON DELETE SET NULL,
       provider_type TEXT NOT NULL, model TEXT NOT NULL, stats_hash TEXT NOT NULL UNIQUE, prompt_version TEXT NOT NULL,
@@ -196,15 +197,10 @@ export class JobDatabase {
         WHEN 'interview' THEN COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up')), jobs.updated_at, jobs.created_at)
         WHEN 'result' THEN COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type = 'result'), jobs.updated_at, jobs.created_at)
         ELSE COALESCE(jobs.updated_at, jobs.created_at)
-      END AS stage_started_at,
-      (SELECT classification FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_classification,
-      (SELECT result_json FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_result_json,
-      (SELECT model FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_model,
-      (SELECT completed_at FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_completed_at,
-      (SELECT profile_hash FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_profile_hash,
-      (SELECT job_description_hash FROM job_match_analyses WHERE job_id = jobs.id AND status = 'completed' ORDER BY completed_at DESC LIMIT 1) AS ai_job_hash
+      END AS stage_started_at
       FROM jobs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`).all(...values) as JobRow[];
   }
+  jobOptions() { return this.db.prepare("SELECT id, company, title FROM jobs WHERE status != 'archived' ORDER BY captured_at DESC").all() as Array<Pick<JobRow, 'id' | 'company' | 'title'>>; }
   countryFilters() { return this.db.prepare("SELECT geo_country AS name, geo_country_code AS code FROM jobs WHERE status != 'archived' GROUP BY geo_country, geo_country_code ORDER BY COALESCE(geo_country, '') COLLATE NOCASE ASC").all() as Array<{ name: string | null; code: string | null }>; }
   geographyBackfillCandidates(options: { includeArchived?: boolean; limit?: number } = {}) {
     const archiveClause = options.includeArchived ? '' : "AND status != 'archived'";
@@ -317,6 +313,25 @@ export class JobDatabase {
   private insertEvent(jobId: string, type: JobEventType, occurredAt: string, note = '') { this.db.prepare('INSERT INTO job_events (id,job_id,type,occurred_at,note,created_at) VALUES (?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, type, occurredAt, note, new Date().toISOString()); }
   appointments(jobId: string) { return this.db.prepare("SELECT * FROM interview_appointments WHERE job_id=? ORDER BY CASE status WHEN 'cancelled' THEN 1 ELSE 0 END, starts_at ASC").all(jobId) as InterviewAppointmentRow[]; }
   nextAppointment(jobId: string) { const now = new Date().toISOString(); return this.db.prepare("SELECT * FROM interview_appointments WHERE job_id=? AND status IN ('proposed', 'confirmed') ORDER BY CASE WHEN starts_at >= ? THEN 0 ELSE 1 END, CASE WHEN starts_at >= ? THEN starts_at END ASC, CASE WHEN starts_at < ? THEN starts_at END DESC LIMIT 1").get(jobId, now, now, now) as InterviewAppointmentRow | undefined; }
+  private chunks(ids: string[], size = 900) { return Array.from({ length: Math.ceil(ids.length / size) }, (_, index) => ids.slice(index * size, (index + 1) * size)); }
+  tagsForJobs(ids: string[]) {
+    const result = new Map(ids.map(id => [id, [] as TagRow[]]));
+    for (const batch of this.chunks(ids)) {
+      if (!batch.length) continue;
+      const rows = this.db.prepare(`SELECT job_tags.job_id, tags.* FROM tags JOIN job_tags ON job_tags.tag_id=tags.id WHERE job_tags.job_id IN (${batch.map(() => '?').join(',')}) ORDER BY tags.name COLLATE NOCASE`).all(...batch) as Array<TagRow & { job_id: string }>;
+      for (const { job_id, ...tag } of rows) result.get(job_id)?.push(tag);
+    }
+    return result;
+  }
+  nextAppointmentsForJobs(ids: string[]) {
+    const result = new Map<string, InterviewAppointmentRow>(); const now = new Date().toISOString();
+    for (const batch of this.chunks(ids)) {
+      if (!batch.length) continue;
+      const rows = this.db.prepare(`SELECT current.* FROM interview_appointments AS current WHERE current.job_id IN (${batch.map(() => '?').join(',')}) AND current.status IN ('proposed', 'confirmed') AND current.id=(SELECT candidate.id FROM interview_appointments AS candidate WHERE candidate.job_id=current.job_id AND candidate.status IN ('proposed', 'confirmed') ORDER BY CASE WHEN candidate.starts_at >= ? THEN 0 ELSE 1 END, CASE WHEN candidate.starts_at >= ? THEN candidate.starts_at END ASC, CASE WHEN candidate.starts_at < ? THEN candidate.starts_at END DESC LIMIT 1)`).all(...batch, now, now, now) as InterviewAppointmentRow[];
+      for (const row of rows) result.set(row.job_id, row);
+    }
+    return result;
+  }
   createAppointment(jobId: string, input: Pick<InterviewAppointmentRow, 'stage' | 'starts_at' | 'time_zone' | 'format' | 'meeting_url' | 'note'> & { status?: InterviewAppointmentStatus; source_email_id?: string | null }) {
     if (!this.get(jobId)) return undefined;
     const now = new Date().toISOString(); const id = crypto.randomUUID();
@@ -371,6 +386,15 @@ export class JobDatabase {
   failAnalysis(id: string, message: string) { this.db.prepare("UPDATE job_match_analyses SET status='failed', error_message=?, completed_at=? WHERE id=?").run(message.slice(0, 500), new Date().toISOString(), id); }
   getAnalysis(id: string) { return this.db.prepare('SELECT * FROM job_match_analyses WHERE id=?').get(id) as AiAnalysisRow | undefined; }
   latestAnalysis(jobId: string) { return this.db.prepare("SELECT * FROM job_match_analyses WHERE job_id=? AND status='completed' ORDER BY completed_at DESC LIMIT 1").get(jobId) as AiAnalysisRow | undefined; }
+  latestAnalysesForJobs(ids: string[]) {
+    const result = new Map<string, AiAnalysisRow>();
+    for (const batch of this.chunks(ids)) {
+      if (!batch.length) continue;
+      const rows = this.db.prepare(`SELECT current.* FROM job_match_analyses AS current WHERE current.job_id IN (${batch.map(() => '?').join(',')}) AND current.status='completed' AND current.id=(SELECT candidate.id FROM job_match_analyses AS candidate WHERE candidate.job_id=current.job_id AND candidate.status='completed' ORDER BY candidate.completed_at DESC LIMIT 1)`).all(...batch) as AiAnalysisRow[];
+      for (const row of rows) result.set(row.job_id, row);
+    }
+    return result;
+  }
   analysisHistory(jobId: string) { return this.db.prepare('SELECT * FROM job_match_analyses WHERE job_id=? ORDER BY created_at DESC').all(jobId) as AiAnalysisRow[]; }
   strategyAnalysis(statsHash: string) { return this.db.prepare('SELECT * FROM ai_strategy_analyses WHERE stats_hash=?').get(statsHash) as AiStrategyAnalysisRow | undefined; }
   saveStrategyAnalysis(input: Omit<AiStrategyAnalysisRow, 'id' | 'created_at'>) { const id = crypto.randomUUID(); const createdAt = new Date().toISOString(); this.db.prepare('INSERT INTO ai_strategy_analyses (id,provider_connection_id,provider_type,model,stats_hash,prompt_version,range_from,range_to,result_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(id, input.provider_connection_id, input.provider_type, input.model, input.stats_hash, input.prompt_version, input.range_from, input.range_to, input.result_json, createdAt); return this.db.prepare('SELECT * FROM ai_strategy_analyses WHERE id=?').get(id) as AiStrategyAnalysisRow; }
