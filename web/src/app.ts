@@ -489,8 +489,13 @@ function rebuildAiProviderForm(form: HTMLFormElement) {
     </div><p id="ai-form-message" class="mt-3 text-sm text-red-700" role="alert"></p><div class="mt-5 flex items-center justify-between border-t border-gray-200 pt-4"><button id="ai-delete" type="button" class="hidden text-sm font-medium text-red-700 hover:underline">Удалить</button><div class="flex gap-2"><button id="ai-cancel" type="button" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50">Отмена</button><button type="submit" class="rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">Сохранить</button></div></div>`;
   (form.querySelector('#ai-provider-type') as HTMLSelectElement).addEventListener('change', syncAiProviderFields);
 }
+let aiSettingsPanel: HTMLElement | null = null;
 function mountAiSettingsPanel() {
-  if (document.querySelector('#ai-settings-slot #ai-list-panel')) return;
+  const target = document.querySelector<HTMLElement>('#ai-settings-slot');
+  if (!target || target.querySelector('#ai-list-panel')) return;
+  // The Settings page is rebuilt on route changes. Keep the provider panel (and
+  // its bound handlers) alive, since its original dialog is consumed on first mount.
+  if (aiSettingsPanel) { target.append(aiSettingsPanel); return; }
   const dialog = document.querySelector('#ai-provider-dialog') as HTMLDialogElement | null; if (!dialog) return;
   if (dialog.open) dialog.close();
   const panel = dialog.firstElementChild as HTMLElement; dialog.remove();
@@ -510,7 +515,8 @@ function mountAiSettingsPanel() {
   panel.className = 'rounded-xl border border-gray-200 bg-white shadow-sm';
   panel.querySelector('#ai-dialog-close')?.classList.add('hidden');
   panel.querySelector('div.overflow-y-auto')?.classList.remove('max-h-[70vh]', 'overflow-y-auto');
-  $('#ai-settings-slot').append(panel);
+  aiSettingsPanel = panel;
+  target.append(panel);
 }
 const imapFormPayload = () => {
   const value = <T extends HTMLInputElement | HTMLSelectElement>(id: string) => $(id) as T;
@@ -784,6 +790,7 @@ async function normalizeCurrentLocation(buttonSelector = '#detail-geo-ai') { if 
 setupGeoEditor();
 setupNotesPanel();
 document.addEventListener('DOMContentLoaded', () => {
+  setupViewControls();
   window.addEventListener('popstate', () => { const id = jobRouteId(); if (id) void openJob(id, false).catch(error => show(error.message, true)); else if (location.pathname === '/settings') renderSettingsTabs(); else if (location.pathname === '/stats') renderStatsPage(); else if (location.pathname === '/') void showJobsList().catch(error => show(error.message, true)); });
   if (location.pathname === '/settings') { void api('/api/tags').then(tags => { allTags = tags as Tag[]; renderSettingsTabs(); }).catch(error => show(error.message, true)); }
   else if (location.pathname === '/stats') renderStatsPage();
