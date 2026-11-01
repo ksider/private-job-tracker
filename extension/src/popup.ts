@@ -27,12 +27,21 @@ async function collect(tabId: number): Promise<CollectorResult> {
     };
     const wrapFullPage = (sourceName: string, snapshot: HTMLElement) => `<section data-snapshot-section="${sourceName}-page">${snapshot.innerHTML}</section>`;
     const copy = document.implementation.createHTMLDocument('snapshot'); let html = ''; let selectedTextLength = 0; const warnings: string[] = [];
+    const selection = window.getSelection();
+    selectedTextLength = selection?.toString().trim().length ?? 0;
+    const hasSelection = Boolean(selection?.rangeCount && selectedTextLength);
     const successFactors = Boolean(select('.jobDisplayShell', '#job-company', '#job-location', '.jobdescription'));
     const workday = Boolean(select('[data-automation-id="jobPostingPage"]', '[data-automation-id="jobPostingHeader"]', '[data-automation-id="jobPostingDescription"]'));
     const greenhouse = Boolean(select('.job-post-container', '.job__header', '.job__description'));
     const smartRecruiters = Boolean(select('main.jobad-main.job', 'main[itemtype="http://schema.org/JobPosting"]'));
-    const source = initialSource === 'linkedin' || initialSource === 'greenhouse' || initialSource === 'smartrecruiters' ? initialSource : successFactors ? 'successfactors' : workday ? 'workday' : greenhouse ? 'greenhouse' : smartRecruiters ? 'smartrecruiters' : initialSource;
-    if (source === 'linkedin') {
+    const detectedSource = initialSource === 'linkedin' || initialSource === 'greenhouse' || initialSource === 'smartrecruiters' ? initialSource : successFactors ? 'successfactors' : workday ? 'workday' : greenhouse ? 'greenhouse' : smartRecruiters ? 'smartrecruiters' : initialSource;
+    // An explicit selection is the user's instruction to bypass a site adapter.
+    // Keep the page URL, but make the selected fragment a Generic snapshot.
+    const source = hasSelection ? 'generic' : detectedSource;
+    if (hasSelection && selection) {
+      const holder = document.createElement('div'); holder.append(selection.getRangeAt(0).cloneContents());
+      html = `<section data-snapshot-section="generic-selection" data-snapshot-capture="selection">${holder.innerHTML}</section>`;
+    } else if (source === 'linkedin') {
       const normalize = (value: string | null | undefined) => value?.replace(/\s+/g, ' ').trim() ?? '';
       const aboutHeading = [...document.querySelectorAll<HTMLElement>('h2')].find(heading => /^about the job$/i.test(normalize(heading.textContent)));
       const description = select('[id^="JobDetails_AboutTheJob_"]', '.jobs-description__content', '.description__text', '.jobs-box__html-content') ?? aboutHeading?.parentElement?.parentElement ?? undefined;
@@ -95,17 +104,14 @@ async function collect(tabId: number): Promise<CollectorResult> {
       html = wrapFullPage('smartrecruiters', snapshot);
       if (!job) warnings.push('SmartRecruiters job details are not visible. Open the vacancy page fully and save again.');
     } else {
-      const selection = window.getSelection();
-      selectedTextLength = selection?.toString().trim().length ?? 0;
-      if (selection && selection.rangeCount && selectedTextLength) { const node = selection.getRangeAt(0).cloneContents(); const holder = document.createElement('div'); holder.append(node); html = holder.innerHTML; }
-      else { const main = select('main', 'article'); html = main?.outerHTML ?? ''; if (!html) warnings.push('Select the relevant job text, or use a page with main/article.'); }
+      const main = select('main', 'article'); html = main?.outerHTML ?? ''; if (!html) warnings.push('Select the relevant job text, or use a page with main/article.');
     }
     copy.body.innerHTML = html;
     copy.querySelectorAll('script,iframe,form,input,button,textarea,select,video,audio,img,link,style,object,embed,meta').forEach(element => element.remove());
     copy.querySelectorAll('*').forEach(element => [...element.attributes].forEach(attribute => { if (attribute.name.startsWith('on') || ['src', 'srcset', 'action', 'formaction'].includes(attribute.name) || (attribute.name === 'href' && !/^(https?:|mailto:|#|\/)/.test(attribute.value))) element.removeAttribute(attribute.name); }));
     const clean = copy.body.innerHTML.slice(0, 5_000_000);
     const easyApply = source === 'linkedin' && copy.querySelector('[data-snapshot-section="easy-apply"]') !== null;
-    return { capture: { snapshot: { schema_version: 1, source, content_type: 'job', url: location.href, page_title: document.title, captured_at: new Date().toISOString(), snapshot: { format: 'html', html: clean, text: copy.body.textContent?.replace(/\s+/g, ' ').trim() || null }, metadata: { collector_version: source === 'linkedin' ? '1.4.0' : '1.3.0', easy_apply: easyApply } }, warnings, preview: (copy.body.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 300) }, selectedTextLength };
+    return { capture: { snapshot: { schema_version: 1, source, content_type: 'job', url: location.href, page_title: document.title, captured_at: new Date().toISOString(), snapshot: { format: 'html', html: clean, text: copy.body.textContent?.replace(/\s+/g, ' ').trim() || null }, metadata: { collector_version: hasSelection ? '1.5.0' : source === 'linkedin' ? '1.4.0' : '1.3.0', capture_mode: hasSelection ? 'selection' : 'page', detected_source: hasSelection ? detectedSource : undefined, easy_apply: easyApply } }, warnings, preview: (copy.body.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 300) }, selectedTextLength };
   }, args: [collectorSource] });
   const captures = frames.flatMap(frame => frame.result ? [frame.result as FrameCapture] : []);
   const selected = captures.filter(item => item.selectedTextLength > 0).sort((left, right) => right.selectedTextLength - left.selectedTextLength)[0];

@@ -10,4 +10,5 @@ describe('browser read-only contract', () => {
   it('recognizes Greenhouse job pages without operating on the source site', () => { expect(source).toMatch(/job-post-container/); expect(source).toMatch(/source === 'greenhouse'/); });
   it('recognizes SmartRecruiters job pages without operating on the source site', () => { expect(source).toMatch(/jobad-main/); expect(source).toMatch(/source === 'smartrecruiters'/); });
   it('prefers selected text from a readable child frame on Generic pages', () => { expect(source).toMatch(/allFrames: collectorSource === 'generic'/); expect(source).toMatch(/selectedTextLength/); expect(source).toMatch(/selected \?\? fallback/); });
+  it('treats an explicit selection as a Generic capture even on a known ATS', () => { expect(source).toMatch(/const source = hasSelection \? 'generic' : detectedSource/); expect(source).toMatch(/data-snapshot-capture="selection"/); expect(source).toMatch(/capture_mode: hasSelection \? 'selection' : 'page'/); });
 });
