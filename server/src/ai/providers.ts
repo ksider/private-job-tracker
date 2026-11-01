@@ -6,6 +6,8 @@ export type GenerationRequest = { system: string; user: string };
 export interface AIProvider { readonly id: ProviderType; validate(connection: ProviderConnection): Promise<void>; listModels(connection: ProviderConnection): Promise<ModelInfo[]>; generateJson(connection: ProviderConnection, request: GenerationRequest): Promise<unknown>; }
 
 const endpoint = (base: string, suffix: string) => `${base.replace(/\/$/, '')}${suffix}`;
+const plainJsonTextRule = 'Global output style: return the requested JSON only. Except for fixed enum or identifier values required by the schema, and fields explicitly requested as HTML, write every string value as plain readable text. Do not use Markdown syntax, code fences, headings, bullets, emphasis markers, backticks, or link markup. Use normal spaces between words; never use underscores or hyphens as word separators.';
+const plainJsonRequest = (request: GenerationRequest): GenerationRequest => ({ ...request, system: `${request.system}\n\n${plainJsonTextRule}` });
 const safeJson = (text: string) => { const trimmed = text.trim(); const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1]?.trim() ?? trimmed; try { return JSON.parse(fenced); } catch { const first = fenced.indexOf('{'); const last = fenced.lastIndexOf('}'); if (first >= 0 && last > first) return JSON.parse(fenced.slice(first, last + 1)); throw new Error('AI provider returned content that does not contain a valid JSON object.'); } };
 const errorDetail = (payload: string) => { try { const parsed = JSON.parse(payload) as { message?: unknown; error?: { message?: unknown } | string; detail?: unknown }; const value = parsed.error && typeof parsed.error === 'object' ? parsed.error.message : parsed.message ?? parsed.error ?? parsed.detail; return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, 400) : ''; } catch { return payload.replace(/\s+/g, ' ').trim().slice(0, 400); } };
 const responseFormatUnsupported = (error: unknown) => error instanceof Error && /AI provider request failed \(4\d\d\).*\b(response[ _-]?format|structured output|json[ _-]?(?:object|mode|schema))\b/i.test(error.message);
@@ -71,7 +73,7 @@ export class ProviderRegistry {
     this.nextRequestAt.set(connection.rate_limit_key, next + Math.ceil(Math.max(rpmInterval, tpmInterval)));
     if (next > now) await new Promise<void>(resolve => setTimeout(resolve, next - now));
   }
-  async generateJson(connection: ProviderConnection, request: GenerationRequest) { await this.waitForSlot(connection, request); return this.get(connection.provider_type).generateJson(connection, request); }
+  async generateJson(connection: ProviderConnection, request: GenerationRequest) { const normalized = plainJsonRequest(request); await this.waitForSlot(connection, normalized); return this.get(connection.provider_type).generateJson(connection, normalized); }
   limited(connection: ProviderConnection): AIProvider {
     const provider = this.get(connection.provider_type);
     return { id: provider.id, validate: value => provider.validate(value), listModels: value => provider.listModels(value), generateJson: (_value, request) => this.generateJson(connection, request) };

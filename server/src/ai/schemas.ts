@@ -10,7 +10,8 @@ export const TagSuggestionsRequestSchema = z.object({ connection_id: z.string().
 export const GenericParseRequestSchema = z.object({ connection_id: z.string().uuid().optional(), model: z.string().trim().max(200).optional() });
 export const LocationNormalizeRequestSchema = z.object({ model: z.string().trim().max(200).optional() });
 export const StrategyRequestSchema = z.object({ connection_id: z.string().uuid() });
-export const TagSuggestionsResultSchema = z.object({ tag_ids: z.array(z.string().uuid()).max(20).default([]), new_tags: z.array(z.string().trim().min(1).max(60)).max(20).default([]) });
+const AiTagNameSchema = z.string().trim().max(60).transform(value => value.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim()).pipe(z.string().min(1).max(60));
+export const TagSuggestionsResultSchema = z.object({ tag_ids: z.array(z.string().uuid()).max(20).default([]), new_tags: z.array(AiTagNameSchema).max(20).default([]) });
 const GenericParseTextSchema = z.string().trim().max(500).nullable().optional().catch(null).transform(value => value || null);
 export const GenericParseResultSchema = z.object({
   title: GenericParseTextSchema,
