@@ -103,6 +103,7 @@ function syncViewState() { viewState.mode = mode; viewState.archive = archiveMod
 function query() { const params = new URLSearchParams(); if (viewState.search) params.set('search', viewState.search); if (viewState.status) params.set('status', viewState.status); if (viewState.source) params.set('source', viewState.source); if (viewState.tag) params.set('tag', viewState.tag); viewState.matches.forEach(match => params.append('match', match)); viewState.countries.forEach(country => params.append('country', country)); params.set('order', viewState.sort); if (archiveMode) params.set('archive', 'only'); return params; }
 let jobsLoadController: AbortController | undefined;
 let jobsLoadGeneration = 0;
+let keepFilterMenuOpen = false;
 async function loadJobs() {
   syncViewState();
   jobsLoadController?.abort();
@@ -116,6 +117,10 @@ async function loadJobs() {
     const reviewOnly = reviews.filter(review => !log.items.some(item => item.id === review.id)).map(review => ({ ...review, updated_at: '' }));
     emailLog = [...reviewOnly, ...log.items]; emailLogTotal = log.total; emailLogLoaded = log.items.length; emailLogCounts = log.counts; emailDuplicates = duplicates; emailReviews = reviews; emailReviewJobs = reviewJobs;
     render(); renderViewControls();
+    if (keepFilterMenuOpen) {
+      document.querySelector<HTMLDetailsElement>('#view-controls details')!.open = true;
+      window.setTimeout(() => { keepFilterMenuOpen = false; }, 0);
+    }
     if (archiveMode && archiveNotifications) { void api('/api/archive/notifications/seen', { method: 'POST' }); archiveNotifications = 0; }
   } catch (error) {
     if (controller.signal.aborted || error instanceof Error && error.name === 'AbortError') return;
@@ -306,15 +311,19 @@ function setupViewControls() {
   ['#status-filter', '#source-filter', '#sort'].forEach(id => $(id).classList.add('hidden'));
   if ($('#view-controls')) return;
   const controls = document.createElement('div'); controls.id = 'view-controls'; controls.className = 'flex shrink-0 items-center gap-1';
-  controls.innerHTML = `<button id="card-density-toggle" type="button" class="hidden" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5 fill-none stroke-current" stroke-width="2"><path d="M5 5h14v4H5zM5 11h14v3H5zM5 17h14v2H5z"/></svg></button><details class="relative"><summary id="filter-trigger" class="list-none cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50">Фильтр</summary><div id="filter-menu" class="absolute right-0 z-30 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white shadow-xl"></div></details><details class="relative"><summary id="sort-trigger" class="list-none cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50">Сортировка</summary><div id="sort-menu" class="absolute right-0 z-30 mt-2 w-64 rounded-xl border border-gray-200 bg-white p-2 shadow-xl"></div></details><details class="relative"><summary id="group-trigger" class="list-none cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50">Группировать</summary><div id="group-menu" class="absolute right-0 z-30 mt-2 w-64 rounded-xl border border-gray-200 bg-white p-2 shadow-xl"></div></details>`;
+  controls.innerHTML = `<button id="card-density-toggle" type="button" class="hidden" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5 fill-none stroke-current" stroke-width="2"><path d="M5 5h14v4H5zM5 11h14v3H5zM5 17h14v2H5z"/></svg></button><details class="relative"><summary id="filter-trigger" class="list-none cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50">Фильтр</summary><div id="filter-menu" class="absolute right-0 z-30 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white shadow-xl"></div></details><details class="relative"><summary id="sort-trigger" class="list-none cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50">Сортировка</summary><div id="sort-menu" class="absolute right-0 z-30 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white shadow-xl"></div></details><details class="relative"><summary id="group-trigger" class="list-none cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50">Группировать</summary><div id="group-menu" class="absolute right-0 z-30 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white shadow-xl"></div></details>`;
   $('#search').parentElement!.after(controls);
   controls.querySelectorAll<HTMLDetailsElement>('details').forEach(menu => menu.addEventListener('toggle', () => { if (menu.open) closeViewMenus(menu); }));
-  controls.addEventListener('focusout', () => window.setTimeout(() => { if (!controls.contains(document.activeElement)) closeViewMenus(); }, 0));
-  document.addEventListener('pointerdown', event => { if (!controls.contains(event.target as Node)) closeViewMenus(); });
+  controls.addEventListener('focusout', () => window.setTimeout(() => { if (!keepFilterMenuOpen && !controls.contains(document.activeElement)) closeViewMenus(); }, 0));
+  document.addEventListener('pointerdown', event => { if (!controls.contains(event.target as Node)) { keepFilterMenuOpen = false; closeViewMenus(); } });
   $('#card-density-toggle').onclick = () => { viewState.compactCards = !viewState.compactCards; syncViewState(); render(); };
   renderBoardDensityToggle();
 }
-function compactOption(label: string, value: string, active: boolean, attribute: string) { return `<button type="button" ${attribute}="${escape(value)}" class="w-full rounded-lg px-3 py-2 text-left text-sm ${active ? 'bg-blue-50 font-medium text-blue-800' : 'hover:bg-gray-50'}">${label}</button>`; }
+function viewMenuOption(label: string, description: string, value: string, active: boolean, attribute: string) {
+  return `<button type="button" ${attribute}="${escape(value)}" aria-pressed="${active}" class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition ${active ? 'bg-blue-50 text-blue-950' : 'hover:bg-gray-50'}"><span class="min-w-0 flex-1"><span class="block text-sm font-medium">${escape(label)}</span><span class="mt-0.5 block text-xs ${active ? 'text-blue-700' : 'text-gray-500'}">${escape(description)}</span></span><span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${active ? 'bg-blue-700 text-white' : 'border border-gray-200 text-transparent'}" aria-hidden="true">✓</span></button>`;
+}
+function viewMenuSection(title: string, options: string[]) { return `<section class="${title ? 'mt-3' : ''}">${title ? `<p class="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">${escape(title)}</p>` : ''}<div class="space-y-0.5">${options.join('')}</div></section>`; }
+function refreshFilteredJobs() { keepFilterMenuOpen = true; void loadJobs().catch(error => show(error.message, true)); }
 function renderViewControls() {
   if (!$('#view-controls')) return;
   const statusChoices: Array<[string, string]> = [['Все этапы', ''], ...stages.map(stage => [stage.label, stage.status] as [string, string])];
@@ -331,9 +340,9 @@ function renderViewControls() {
   const countryFilter = `<div class="relative"><div class="flex items-center justify-between gap-2"><label for="compact-country-search" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Страны</label><span id="compact-country-summary" class="text-xs font-medium text-gray-500">${selectedCountriesLabel}</span></div><div class="relative mt-1"><input id="compact-country-search" autocomplete="off" class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-2.5 pr-8 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100" placeholder="Найти страну…"><button id="clear-compact-countries" type="button" aria-label="Сбросить страны" class="${viewState.countries.length ? '' : 'hidden '}absolute inset-y-0 right-0 px-2 text-lg leading-none text-gray-400 hover:text-gray-700">×</button></div><div id="compact-country-options" class="mt-1 hidden max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-sm"></div></div>`;
   const tagFilter = `<div class="relative"><label for="compact-tag-search" class="block text-xs font-semibold uppercase tracking-wide text-gray-500">Тег</label><div class="relative mt-1"><input id="compact-tag-search" autocomplete="off" class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-2.5 pr-8 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100" placeholder="Найти тег…" value="${escape(selectedTag?.name ?? '')}"><button id="clear-compact-tag" type="button" aria-label="Сбросить тег" class="${selectedTag ? '' : 'hidden '}absolute inset-y-0 right-0 px-2 text-lg leading-none text-gray-400 hover:text-gray-700">×</button></div><div id="compact-tag-options" class="mt-1 hidden max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-sm"></div></div>`;
   filterMenu.innerHTML = `<div class="space-y-3 p-3"><section class="rounded-xl border border-gray-200 bg-gray-50/70 p-3"><p class="text-sm font-semibold text-gray-900">Вакансия</p><div class="mt-3 grid gap-3 sm:grid-cols-2">${selectField('compact-status', 'Этап', statusChoices, viewState.status)}${selectField('compact-source', 'Источник', sourceChoices, viewState.source)}</div></section>${matchFilter}<section class="rounded-xl border border-gray-200 bg-white p-3"><p class="text-sm font-semibold text-gray-900">Контекст</p><div class="mt-3 space-y-3">${countryFilter}${tagFilter}</div></section></div><div class="border-t border-gray-100 bg-gray-50/70 px-3 py-2.5"><button id="clear-filters" type="button" class="text-sm font-medium text-blue-700 hover:text-blue-900 hover:underline">Сбросить фильтры</button></div>`;
-  ($('#compact-status') as HTMLSelectElement).onchange = event => { viewState.status = (event.target as HTMLSelectElement).value; closeViewMenus(); void loadJobs().catch(error => show(error.message, true)); };
-  ($('#compact-source') as HTMLSelectElement).onchange = event => { viewState.source = (event.target as HTMLSelectElement).value; closeViewMenus(); void loadJobs().catch(error => show(error.message, true)); };
-  filterMenu.querySelectorAll<HTMLButtonElement>('[data-filter-match]').forEach(button => button.onclick = () => { const value = button.dataset.filterMatch as AiMatchFilter; viewState.matches = viewState.matches.includes(value) ? viewState.matches.filter(match => match !== value) : [...viewState.matches, value]; void loadJobs().catch(error => show(error.message, true)); });
+  ($('#compact-status') as HTMLSelectElement).onchange = event => { viewState.status = (event.target as HTMLSelectElement).value; refreshFilteredJobs(); };
+  ($('#compact-source') as HTMLSelectElement).onchange = event => { viewState.source = (event.target as HTMLSelectElement).value; refreshFilteredJobs(); };
+  filterMenu.querySelectorAll<HTMLButtonElement>('[data-filter-match]').forEach(button => button.onclick = () => { const value = button.dataset.filterMatch as AiMatchFilter; viewState.matches = viewState.matches.includes(value) ? viewState.matches.filter(match => match !== value) : [...viewState.matches, value]; refreshFilteredJobs(); });
   const countrySearch = $('#compact-country-search') as HTMLInputElement;
   const countryOptions = $('#compact-country-options');
   const renderCountryOptions = () => {
@@ -341,10 +350,10 @@ function renderViewControls() {
     const matches = countryChoices.filter(country => country.label.toLocaleLowerCase('ru').includes(search));
     countryOptions.innerHTML = `<button type="button" data-filter-country-all class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-blue-50"><span class="flex h-4 w-4 items-center justify-center rounded border ${viewState.countries.length ? 'border-gray-300 bg-white' : 'border-blue-700 bg-blue-700 text-white'}">${viewState.countries.length ? '' : '✓'}</span><span>Все страны</span></button>${matches.map(country => `<button type="button" data-filter-country="${escape(country.value)}" class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-blue-50"><span class="flex h-4 w-4 items-center justify-center rounded border ${viewState.countries.includes(country.value) ? 'border-blue-700 bg-blue-700 text-white' : 'border-gray-300 bg-white'}">${viewState.countries.includes(country.value) ? '✓' : ''}</span><span class="truncate">${escape(country.label)}</span></button>`).join('') || '<p class="px-3 py-2 text-sm text-gray-500">Стран не найдено.</p>'}`;
     countryOptions.classList.remove('hidden');
-    countryOptions.querySelector<HTMLButtonElement>('[data-filter-country-all]')!.onclick = () => { viewState.countries = []; void loadJobs().catch(error => show(error.message, true)); };
-    countryOptions.querySelectorAll<HTMLButtonElement>('[data-filter-country]').forEach(button => button.onclick = () => { const value = button.dataset.filterCountry!; viewState.countries = viewState.countries.includes(value) ? viewState.countries.filter(country => country !== value) : [...viewState.countries, value]; void loadJobs().catch(error => show(error.message, true)); });
+    countryOptions.querySelector<HTMLButtonElement>('[data-filter-country-all]')!.onclick = () => { viewState.countries = []; refreshFilteredJobs(); };
+    countryOptions.querySelectorAll<HTMLButtonElement>('[data-filter-country]').forEach(button => button.onclick = () => { const value = button.dataset.filterCountry!; viewState.countries = viewState.countries.includes(value) ? viewState.countries.filter(country => country !== value) : [...viewState.countries, value]; refreshFilteredJobs(); });
   };
-  $('#clear-compact-countries').onclick = () => { viewState.countries = []; countrySearch.value = ''; void loadJobs().catch(error => show(error.message, true)); };
+  $('#clear-compact-countries').onclick = () => { viewState.countries = []; countrySearch.value = ''; refreshFilteredJobs(); };
   const tagSearch = $('#compact-tag-search') as HTMLInputElement;
   const tagOptions = $('#compact-tag-options');
   const renderTagOptions = () => {
@@ -352,7 +361,7 @@ function renderViewControls() {
     const matches = allTags.filter(tag => tag.name.toLocaleLowerCase('ru').includes(search)).slice(0, 12);
     tagOptions.innerHTML = matches.length ? matches.map(tag => `<button type="button" data-filter-tag="${tag.id}" class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-blue-50"><span class="h-2.5 w-2.5 shrink-0 rounded-full" style="background:${escape(tag.color)}"></span><span class="truncate">${escape(tag.name)}</span></button>`).join('') : '<p class="px-3 py-2 text-sm text-gray-500">Тегов не найдено.</p>';
     tagOptions.classList.remove('hidden');
-    tagOptions.querySelectorAll<HTMLButtonElement>('[data-filter-tag]').forEach(button => button.onclick = () => { viewState.tag = button.dataset.filterTag ?? ''; closeViewMenus(); void loadJobs().catch(error => show(error.message, true)); });
+    tagOptions.querySelectorAll<HTMLButtonElement>('[data-filter-tag]').forEach(button => button.onclick = () => { viewState.tag = button.dataset.filterTag ?? ''; refreshFilteredJobs(); });
   };
   const countryPicker = countryOptions.parentElement!; const tagPicker = tagOptions.parentElement!;
   const closeCountryPicker = () => countryOptions.classList.add('hidden'); const closeTagPicker = () => tagOptions.classList.add('hidden');
@@ -364,13 +373,32 @@ function renderViewControls() {
   tagSearch.oninput = () => { closeCountryPicker(); renderTagOptions(); };
   tagSearch.onblur = () => window.setTimeout(() => { if (!tagPicker.contains(document.activeElement)) closeTagPicker(); }, 0);
   tagSearch.onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); closeViewMenus(); } };
-  $('#clear-compact-tag').onclick = () => { viewState.tag = ''; tagSearch.value = ''; tagOptions.classList.add('hidden'); closeViewMenus(); void loadJobs().catch(error => show(error.message, true)); };
-  $('#clear-filters').onclick = () => { viewState.search = ''; viewState.status = ''; viewState.source = ''; viewState.tag = ''; viewState.matches = []; viewState.countries = []; ($('#search') as HTMLInputElement).value = ''; closeViewMenus(); void loadJobs().catch(error => show(error.message, true)); };
-  const sortLabels: Array<[SortBy, string]> = [['newest', 'Сначала новые'], ['oldest', 'Сначала старые'], ['updated', 'Недавно обновлены'], ['waiting', 'Дольше без события'], ['company', 'Компания'], ['location', 'Локация'], ['title', 'Позиция']];
-  $('#sort-menu').innerHTML = sortLabels.map(([value, label]) => compactOption(label, value, viewState.sort === value, 'data-sort')).join('');
+  $('#clear-compact-tag').onclick = () => { viewState.tag = ''; tagSearch.value = ''; tagOptions.classList.add('hidden'); refreshFilteredJobs(); };
+  $('#clear-filters').onclick = () => { viewState.search = ''; viewState.status = ''; viewState.source = ''; viewState.tag = ''; viewState.matches = []; viewState.countries = []; ($('#search') as HTMLInputElement).value = ''; refreshFilteredJobs(); };
+  const sortOptions: Array<[SortBy, string, string, 'По времени' | 'По данным вакансии']> = [
+    ['newest', 'Сначала новые', 'Дата добавления: от новых к старым', 'По времени'],
+    ['oldest', 'Сначала старые', 'Дата добавления: от старых к новым', 'По времени'],
+    ['updated', 'Недавно обновлены', 'Последнее изменение вакансии', 'По времени'],
+    ['waiting', 'Дольше без события', 'Карточки без движения — сверху', 'По времени'],
+    ['company', 'Компания', 'По названию работодателя', 'По данным вакансии'],
+    ['location', 'Локация', 'По указанному месту работы', 'По данным вакансии'],
+    ['title', 'Позиция', 'По названию вакансии', 'По данным вакансии'],
+  ];
+  const sortLabels: Array<[SortBy, string]> = sortOptions.map(([value, label]) => [value, label]);
+  $('#sort-menu').innerHTML = `<div class="p-2">${viewMenuSection('По времени', sortOptions.filter(([, , , section]) => section === 'По времени').map(([value, label, description]) => viewMenuOption(label, description, value, viewState.sort === value, 'data-sort')))}${viewMenuSection('По данным вакансии', sortOptions.filter(([, , , section]) => section === 'По данным вакансии').map(([value, label, description]) => viewMenuOption(label, description, value, viewState.sort === value, 'data-sort')))}</div>`;
   $('#sort-menu').querySelectorAll<HTMLButtonElement>('[data-sort]').forEach(button => button.onclick = () => { viewState.sort = button.dataset.sort as SortBy; closeViewMenus(); void loadJobs().catch(error => show(error.message, true)); });
-  const groups: Array<[GroupBy, string]> = [['', 'Без группировки'], ['tag', 'По тегу'], ['company', 'По компании'], ['country', 'По стране'], ['region', 'По региону'], ['source', 'По источнику'], ['ai_match', 'По AI Match'], ['month', 'По месяцу добавления']];
-  $('#group-menu').innerHTML = groups.map(([value, label]) => compactOption(label, value, viewState.group === value, 'data-group')).join('');
+  const groupOptions: Array<[GroupBy, string, string, 'Карточка' | 'Классификация' | 'Время' | '']> = [
+    ['', 'Без группировки', 'Единый список карточек', ''],
+    ['company', 'По компании', 'Работодатель', 'Карточка'],
+    ['source', 'По источнику', 'Сайт или способ добавления', 'Карточка'],
+    ['tag', 'По тегу', 'Один тег — одна секция', 'Классификация'],
+    ['country', 'По стране', 'Страна из геоданных', 'Классификация'],
+    ['region', 'По региону', 'Регион из геоданных', 'Классификация'],
+    ['ai_match', 'По AI Match', 'Уровень соответствия вакансии', 'Классификация'],
+    ['month', 'По месяцу добавления', 'Месяц сохранения карточки', 'Время'],
+  ];
+  const groups: Array<[GroupBy, string]> = groupOptions.map(([value, label]) => [value, label]);
+  $('#group-menu').innerHTML = `<div class="p-2">${viewMenuSection('', groupOptions.filter(([, , , section]) => !section).map(([value, label, description]) => viewMenuOption(label, description, value, viewState.group === value, 'data-group')))}${viewMenuSection('Карточка', groupOptions.filter(([, , , section]) => section === 'Карточка').map(([value, label, description]) => viewMenuOption(label, description, value, viewState.group === value, 'data-group')))}${viewMenuSection('Классификация', groupOptions.filter(([, , , section]) => section === 'Классификация').map(([value, label, description]) => viewMenuOption(label, description, value, viewState.group === value, 'data-group')))}${viewMenuSection('Время', groupOptions.filter(([, , , section]) => section === 'Время').map(([value, label, description]) => viewMenuOption(label, description, value, viewState.group === value, 'data-group')))}</div>`;
   $('#group-menu').querySelectorAll<HTMLButtonElement>('[data-group]').forEach(button => button.onclick = () => { viewState.group = button.dataset.group as GroupBy; closeViewMenus(); void loadJobs().catch(error => show(error.message, true)); });
   const hasFilters = Boolean(viewState.status || viewState.source || viewState.tag || viewState.matches.length || viewState.countries.length);
   const filterTrigger = $('#filter-trigger');
