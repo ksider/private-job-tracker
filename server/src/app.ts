@@ -176,7 +176,7 @@ export function buildApp(config: AppConfig) {
     return { success: true, job_id: result.jobId, action: result.action, parser: parser.source, warnings: parsed.warnings };
   });
   app.get('/api/jobs', async request => {
-    const listed = db.list(request.query as { search?: string; status?: string; source?: string; tag?: string; country?: string | string[]; match?: string; order?: string; archive?: string }); const ids = listed.map(job => job.id);
+    const listed = db.list(request.query as { search?: string; status?: string; source?: string; tag?: string; country?: string | string[]; match?: string | string[]; order?: string; archive?: string }); const ids = listed.map(job => job.id);
     const tags = db.tagsForJobs(ids); const nextInterviews = db.nextAppointmentsForJobs(ids); const analyses = db.latestAnalysesForJobs(ids); const profile = await profiles.load().catch(() => undefined);
     return listed.map(job => ({ ...job, next_interview: nextInterviews.get(job.id) ?? null, tags: tags.get(job.id) ?? [], ai_match: analysisView(analyses.get(job.id), profile, job.description_text) }));
   });

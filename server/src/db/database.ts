@@ -174,14 +174,14 @@ export class JobDatabase {
     this.db.prepare('INSERT INTO snapshots (id,job_id,source,source_url,content_type,page_title,raw_html,raw_text,collector_version,parser_version,parse_status,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, parsed.source, parsed.sourceUrl, 'job', raw.pageTitle ?? null, raw.html, raw.text, raw.collectorVersion, parsed.parserVersion, parsed.parseStatus, raw.capturedAt, now);
     return { jobId, action };
   }
-  list(filters: { search?: string; status?: string; source?: string; tag?: string; country?: string | string[]; match?: string; order?: string; archive?: string }) {
+  list(filters: { search?: string; status?: string; source?: string; tag?: string; country?: string | string[]; match?: string | string[]; order?: string; archive?: string }) {
     const where: string[] = []; const values: unknown[] = [];
     if (filters.search) { where.push('(title LIKE ? OR company LIKE ?)'); values.push(`%${filters.search}%`, `%${filters.search}%`); }
     if (filters.status) { where.push('status = ?'); values.push(filters.status); }
     if (filters.source) { where.push('source = ?'); values.push(filters.source); }
     if (filters.tag) { where.push('EXISTS (SELECT 1 FROM job_tags WHERE job_tags.job_id=jobs.id AND job_tags.tag_id=?)'); values.push(filters.tag); }
-    if (filters.match === 'not_analyzed') where.push("NOT EXISTS (SELECT 1 FROM job_match_analyses WHERE job_match_analyses.job_id=jobs.id AND job_match_analyses.status='completed')");
-    else if (filters.match) { where.push("(SELECT classification FROM job_match_analyses WHERE job_match_analyses.job_id=jobs.id AND job_match_analyses.status='completed' ORDER BY completed_at DESC LIMIT 1) = ?"); values.push(filters.match); }
+    const matches = [...new Set((Array.isArray(filters.match) ? filters.match : filters.match ? [filters.match] : []).map(match => match.trim()).filter(Boolean))];
+    if (matches.length) { const alternatives: string[] = []; const classifications = matches.filter(match => match !== 'not_analyzed'); if (classifications.length) { alternatives.push(`(SELECT classification FROM job_match_analyses WHERE job_match_analyses.job_id=jobs.id AND job_match_analyses.status='completed' ORDER BY completed_at DESC LIMIT 1) IN (${classifications.map(() => '?').join(',')})`); values.push(...classifications); } if (matches.includes('not_analyzed')) alternatives.push("NOT EXISTS (SELECT 1 FROM job_match_analyses WHERE job_match_analyses.job_id=jobs.id AND job_match_analyses.status='completed')"); where.push(`(${alternatives.join(' OR ')})`); }
     const countries = [...new Set((Array.isArray(filters.country) ? filters.country : filters.country ? [filters.country] : []).map(country => country.trim()).filter(Boolean))];
     if (countries.length) {
       const alternatives: string[] = []; const codes = countries.filter(country => country !== '__unknown__');
