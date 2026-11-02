@@ -95,12 +95,13 @@ export function buildApp(config: AppConfig) {
       for (const group of groups) {
         let latest: string | null = null;
         const advance = (next: string) => { if (latest) link(latest, next); else link(node(`${dimension}:${group.value || 'none'}`, group.label, 'category', group.value || undefined, group.color), next); latest = next; };
+        advance(node('stage:sent', 'Отправлено', 'stage'));
         if (row.reached_hr) advance(node('stage:hr', 'HR-скрининг', 'stage'));
         if (row.reached_technical) advance(node('stage:technical', 'Техническое интервью', 'stage'));
         if (row.reached_final) advance(node('stage:final', 'Финальное интервью', 'stage'));
         if (row.reached_follow_up) advance(node('stage:follow-up', 'Follow-up', 'stage'));
         if (row.result_outcome) { const outcomeLabel = outcomeLabels[row.result_outcome] ?? 'Результат'; advance(node(`outcome:${row.result_outcome}`, outcomeLabel, 'outcome')); }
-        if (latest) countedApplications += 1;
+        countedApplications += 1;
       }
     }
     const tagMap = new Map<string, { name: string; color: string }>(); const countryMap = new Map<string, string | null>(); for (const row of allRows) { for (const tag of row.tags) tagMap.set(tag.id, { name: tag.name, color: tag.color }); const country = row.geo_country || 'Не определено'; if (!countryMap.has(country)) countryMap.set(country, row.geo_country_code); }

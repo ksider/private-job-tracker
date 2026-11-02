@@ -669,7 +669,7 @@ function renderSankeyStats(stats: SankeyStats, scale: ApplicationStatsScale) {
   controls.innerHTML = `<div class="text-right"><p class="text-xs text-gray-500">${escape(sankeyFilterSummary())}</p><button id="sankey-settings-open" type="button" class="mt-1 rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-medium text-blue-800 hover:bg-blue-50">Настроить поток</button></div>`;
   (controls.querySelector('#sankey-settings-open') as HTMLButtonElement).onclick = () => { renderSankeySettings(scale); if (!sankeySettings!.open) sankeySettings!.showModal(); };
   const scaleName = { day: 'за сегодня', week: 'за 7 дней', month: 'за 30 дней', all: 'за всё время' }[scale];
-  const flowCoverage = !stats.tag_counting_note && stats.counted_applications < stats.applications ? ` · в потоке ${stats.counted_applications} с зафиксированным следующим этапом` : '';
+  const flowCoverage = !stats.tag_counting_note && stats.counted_applications < stats.applications ? ` · в потоке ${stats.counted_applications}` : '';
   const tagNote = stats.tag_counting_note ? ` · в ветках показано ${stats.counted_applications}; вакансия с несколькими тегами появляется в каждой подходящей ветке.` : '';
   summary.innerHTML = stats.applications ? `<span class="font-semibold text-gray-900">${stats.applications}</span> уникальных откликов ${scaleName}${flowCoverage}${tagNote}` : `Отправленных заявок ${scaleName} нет.`;
   sankeyChart?.dispose(); sankeyChart = null; chartTarget.replaceChildren();
