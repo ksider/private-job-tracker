@@ -9,6 +9,7 @@
 #job-edit-dialog { width: min(820px, calc(100% - 2rem)); }
 #ai-provider-dialog { width: min(920px, calc(100% - 2rem)); }
 #match-dialog { width: min(980px, calc(100% - 2rem)); }
+#cover-letter-dialog { width: min(760px, calc(100% - 2rem)); }
 
 /* A color picker is part of a tag, not a separate form control. */
 .tag-color-input { appearance: none; -webkit-appearance: none; border-radius: 9999px; overflow: hidden; }

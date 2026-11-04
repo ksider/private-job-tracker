@@ -459,29 +459,54 @@ function renderInterviewAppointments(job: Job) {
   form.onsubmit = event => { event.preventDefault(); const start = ($('#appointment-start') as HTMLInputElement).value; if (!start) return; const body = { stage: ($('#appointment-stage') as HTMLSelectElement).value, starts_at: new Date(start).toISOString(), time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone, format: ($('#appointment-format') as HTMLSelectElement).value, meeting_url: ($('#appointment-url') as HTMLInputElement).value.trim(), note: ($('#appointment-note') as HTMLInputElement).value.trim() }; const id = ($('#appointment-id') as HTMLInputElement).value; void api(id ? `/api/jobs/${job.id}/interviews/${id}` : `/api/jobs/${job.id}/interviews`, { method: id ? 'PATCH' : 'POST', body: JSON.stringify(body) }).then(() => openJob(job.id, false)).then(() => show(id ? 'Встреча обновлена.' : 'Встреча назначена.')).catch(error => show(error.message, true)); };
 }
 function renderNotes(notes: string) { const target = $('#notes-display'); const entries = notes.trim().split(/\n{2,}/).filter(Boolean); target.innerHTML = entries.length ? entries.map(note => `<p class="rounded-lg bg-gray-50 p-3 text-sm text-gray-700">${escape(note).replace(/\n/g, '<br>')}</p>`).join('') : '<p class="text-sm text-gray-500">Заметок пока нет.</p>'; }
+let coverLetterSubject: Job | null = null;
+let coverLetterConnectionId = '';
+const coverLetterDialog = () => $('#cover-letter-dialog') as HTMLDialogElement;
 function renderCoverLetter(job: Job) {
-  const panel = $('#cover-letter-panel'); const generate = $('#cover-letter-generate') as HTMLButtonElement;
+  const panel = $('#cover-letter-panel'); const action = $('#cover-letter-generate') as HTMLButtonElement;
   panel.classList.toggle('hidden', !job.cover_letter_text);
-  if (!job.cover_letter_text) { panel.replaceChildren(); generate.textContent = 'AI письмо'; return; }
-  panel.innerHTML = `<div class="rounded-xl border border-violet-200 bg-violet-50/40 p-3"><div class="flex flex-wrap items-center justify-between gap-2"><div><h4 class="text-sm font-semibold text-violet-950">Cover letter</h4><p class="mt-0.5 text-xs text-violet-800">${job.cover_letter_updated_at ? `${formatDateTime(job.cover_letter_updated_at)} · ` : ''}${escape(job.cover_letter_model ?? 'AI')}</p></div><div class="flex flex-wrap gap-2"><button id="cover-letter-copy" type="button" class="rounded-md border border-violet-300 bg-white px-2.5 py-1.5 text-xs font-medium text-violet-800 hover:bg-violet-50">Копировать</button><button id="cover-letter-download" type="button" class="rounded-md border border-violet-300 bg-white px-2.5 py-1.5 text-xs font-medium text-violet-800 hover:bg-violet-50">.txt</button></div></div><textarea id="cover-letter-text" maxlength="20000" class="mt-3 min-h-56 w-full rounded-lg border border-violet-200 bg-white p-3 text-sm leading-6 text-gray-800 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"></textarea><div class="mt-2 flex justify-end"><button id="cover-letter-save" type="button" class="rounded-md bg-violet-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-800">Сохранить текст</button></div></div>`;
-  const text = $('#cover-letter-text') as HTMLTextAreaElement; text.value = job.cover_letter_text;
-  ($('#cover-letter-copy') as HTMLButtonElement).onclick = () => void navigator.clipboard.writeText(text.value).then(() => show('Cover letter скопирован.')).catch(() => show('Не удалось скопировать текст.', true));
-  ($('#cover-letter-download') as HTMLButtonElement).onclick = () => { const blob = new Blob([text.value], { type: 'text/plain;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `cover-letter-${(job.company || job.title || 'job').replace(/[^a-z0-9]+/gi, '-').replace(/(^-|-$)/g, '').toLowerCase() || 'job'}.txt`; link.click(); URL.revokeObjectURL(link.href); };
-  ($('#cover-letter-save') as HTMLButtonElement).onclick = () => { const button = $('#cover-letter-save') as HTMLButtonElement; button.disabled = true; void api(`/api/jobs/${job.id}`, { method: 'PATCH', body: JSON.stringify({ cover_letter_text: text.value.trim() || null }) }).then((updated: Job) => { current = current?.id === updated.id ? { ...current, ...updated } : current; jobs = jobs.map(item => item.id === updated.id ? { ...item, ...updated } : item); renderCoverLetter(current ?? { ...job, ...updated }); show('Cover letter сохранён.'); }).catch(error => show(error.message, true)).finally(() => { if (button.isConnected) button.disabled = false; }); };
-  generate.textContent = 'Обновить AI письмо';
+  action.textContent = job.cover_letter_text ? 'Письмо' : 'AI письмо';
+  if (!job.cover_letter_text) { panel.replaceChildren(); return; }
+  panel.innerHTML = `<button id="cover-letter-open" type="button" class="flex w-full items-center justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50/50 px-3 py-2.5 text-left hover:bg-violet-50"><span class="min-w-0"><span class="block text-sm font-medium text-violet-950">Письмо готово</span><span class="mt-0.5 block truncate text-xs text-violet-800">${job.cover_letter_updated_at ? `${formatDateTime(job.cover_letter_updated_at)} · ` : ''}${escape(job.cover_letter_model ?? 'AI')}</span></span><span class="shrink-0 text-sm font-medium text-violet-800">Открыть →</span></button>`;
+  ($('#cover-letter-open') as HTMLButtonElement).onclick = () => void openCoverLetterDialog();
+}
+function renderCoverLetterConnections() {
+  const select = $('#cover-letter-connection') as HTMLSelectElement; const enabled = aiConnections.filter(connection => connection.enabled); const previous = coverLetterConnectionId || select.value;
+  select.innerHTML = enabled.length ? enabled.map(connection => `<option value="${connection.id}">${escape(connection.display_name)} · ${escape(connection.model)}</option>`).join('') : '<option value="">Нет доступных AI-подключений</option>';
+  const preferred = enabled.some(connection => connection.id === previous) ? previous : enabled.some(connection => connection.id === aiSettings.default_connection_id) ? aiSettings.default_connection_id! : enabled[0]?.id ?? '';
+  coverLetterConnectionId = preferred; select.value = preferred; select.disabled = !enabled.length;
+  ($('#cover-letter-create') as HTMLButtonElement).disabled = !enabled.length;
+}
+async function loadCoverLetterConnections() { const [connections, settings] = await Promise.all([api('/api/ai/connections') as Promise<AiConnection[]>, api('/api/ai/settings') as Promise<AiSettings>]); aiConnections = connections; aiSettings = settings; renderCoverLetterConnections(); }
+function renderCoverLetterDialog(job: Job) {
+  $('#cover-letter-dialog-title').textContent = job.title ?? 'Без названия'; $('#cover-letter-dialog-company').textContent = job.company ?? 'Неизвестная компания';
+  const text = $('#cover-letter-text') as HTMLTextAreaElement; text.value = job.cover_letter_text ?? '';
+  ($('#cover-letter-meta') as HTMLElement).textContent = job.cover_letter_text ? `${job.cover_letter_updated_at ? `${formatDateTime(job.cover_letter_updated_at)} · ` : ''}${job.cover_letter_model ?? 'AI'}` : 'Письмо ещё не создано.';
+  const hasText = Boolean(job.cover_letter_text); for (const id of ['#cover-letter-copy', '#cover-letter-download', '#cover-letter-save']) ($(id) as HTMLButtonElement).disabled = !hasText;
+  ($('#cover-letter-create') as HTMLButtonElement).textContent = hasText ? 'Создать новую версию' : 'Создать письмо';
+}
+async function openCoverLetterDialog() {
+  if (!current) return; coverLetterSubject = current;
+  await loadCoverLetterConnections(); renderCoverLetterDialog(coverLetterSubject);
+  if (!coverLetterDialog().open) coverLetterDialog().showModal();
+}
+function coverLetterFileName(job: Job) { return `cover-letter-${(job.company || job.title || 'job').replace(/[^a-z0-9]+/gi, '-').replace(/(^-|-$)/g, '').toLowerCase() || 'job'}.txt`; }
+async function saveCoverLetterText() {
+  const job = coverLetterSubject ?? current; if (!job) return;
+  const button = $('#cover-letter-save') as HTMLButtonElement; const text = ($('#cover-letter-text') as HTMLTextAreaElement).value.trim(); button.disabled = true;
+  try { const updated = await api(`/api/jobs/${job.id}`, { method: 'PATCH', body: JSON.stringify({ cover_letter_text: text || null }) }) as Job; current = current?.id === updated.id ? { ...current, ...updated } : current; coverLetterSubject = { ...job, ...updated }; jobs = jobs.map(item => item.id === updated.id ? { ...item, ...updated } : item); if (current) renderCoverLetter(current); renderCoverLetterDialog(coverLetterSubject); show(text ? 'Письмо сохранено.' : 'Письмо удалено.'); } catch (error) { show(error instanceof Error ? error.message : 'Не удалось сохранить письмо.', true); } finally { if (button.isConnected) button.disabled = false; }
 }
 async function generateCoverLetter(consent = false): Promise<void> {
-  if (!current) return;
-  const button = $('#cover-letter-generate') as HTMLButtonElement; const original = button.textContent;
-  button.disabled = true; button.textContent = 'Генерируем…';
+  const job = coverLetterSubject ?? current; if (!job) return;
+  const button = $('#cover-letter-create') as HTMLButtonElement; const connectionId = ($('#cover-letter-connection') as HTMLSelectElement).value || undefined; button.disabled = true; button.textContent = 'Генерируем…';
   try {
-    const response = await fetch(`/api/jobs/${current.id}/cover-letter`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ consent }) });
+    const response = await fetch(`/api/jobs/${job.id}/cover-letter`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ connection_id: connectionId, consent }) });
     const data = await response.json().catch(() => ({})) as { error?: string; requires_consent?: boolean; job?: Job };
     if (response.status === 412 && data.requires_consent) { if (confirm(data.error)) return await generateCoverLetter(true); return; }
-    if (!response.ok || !data.job) throw new Error(data.error || 'Не удалось создать cover letter.');
-    current = { ...current, ...data.job, events: current.events }; jobs = jobs.map(job => job.id === current!.id ? { ...job, ...data.job } : job); renderCoverLetter(current); show('Cover letter создан. Проверьте текст перед отправкой.');
-  } catch (error) { show(error instanceof Error ? error.message : 'Не удалось создать cover letter.', true); }
-  finally { if (button.isConnected) { button.disabled = false; button.textContent = current?.cover_letter_text ? 'Обновить AI письмо' : original; } }
+    if (!response.ok || !data.job) throw new Error(data.error || 'Не удалось создать письмо.');
+    current = current?.id === data.job.id ? { ...current, ...data.job, events: current.events } : current; coverLetterSubject = { ...job, ...data.job }; jobs = jobs.map(item => item.id === data.job!.id ? { ...item, ...data.job! } : item); if (current) renderCoverLetter(current); renderCoverLetterDialog(coverLetterSubject); show('Письмо создано. Проверьте текст перед отправкой.');
+  } catch (error) { show(error instanceof Error ? error.message : 'Не удалось создать письмо.', true); }
+  finally { if (button.isConnected) { button.disabled = false; button.textContent = coverLetterSubject?.cover_letter_text ? 'Создать новую версию' : 'Создать письмо'; } }
 }
 function closeViewMenus(except?: HTMLDetailsElement) { document.querySelectorAll<HTMLDetailsElement>('#view-controls details[open]').forEach(menu => { if (menu !== except) menu.open = false; }); }
 function renderBoardDensityToggle() { const button = document.querySelector('#card-density-toggle') as HTMLButtonElement | null; if (!button) return; const visible = mode === 'board' && !archiveMode; button.classList.toggle('hidden', !visible); button.className = `${visible ? '' : 'hidden '}rounded-lg border p-2 text-gray-700 hover:bg-gray-50 ${viewState.compactCards ? 'border-blue-700 bg-blue-700 text-white hover:bg-blue-800' : 'border-gray-300 bg-white'}`; button.title = viewState.compactCards ? 'Обычные карточки' : 'Компактные карточки'; button.setAttribute('aria-label', button.title); button.setAttribute('aria-pressed', String(viewState.compactCards)); }
@@ -962,6 +987,18 @@ function setupNotesPanel() {
   form.replaceChildren(input, save); notesSection.append(form); timelineSection.after(notesSection);
   $('#detail-notes').closest('label')?.classList.add('hidden');
 }
+function setupCoverLetterDialog() {
+  if (document.querySelector('#cover-letter-dialog')) return;
+  const dialog = document.createElement('dialog'); dialog.id = 'cover-letter-dialog'; dialog.className = 'm-auto w-[min(760px,calc(100%-2rem))] rounded-2xl p-0 shadow-2xl backdrop:bg-slate-900/45';
+  dialog.innerHTML = '<section class="bg-white"><header class="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4"><div class="min-w-0"><p class="text-sm font-medium text-violet-700">AI письмо</p><h2 id="cover-letter-dialog-title" class="truncate text-xl font-semibold text-gray-900"></h2><p id="cover-letter-dialog-company" class="mt-1 truncate text-sm text-gray-500"></p></div><button id="cover-letter-close" type="button" aria-label="Закрыть" class="rounded-lg p-2 text-2xl leading-none text-gray-400 hover:bg-gray-100 hover:text-gray-700">×</button></header><div class="max-h-[62vh] overflow-y-auto p-5"><div class="flex flex-wrap items-center justify-between gap-3"><p id="cover-letter-meta" class="text-xs text-gray-500"></p><div class="flex gap-2"><button id="cover-letter-copy" type="button" class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Копировать</button><button id="cover-letter-download" type="button" class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">.txt</button></div></div><textarea id="cover-letter-text" maxlength="20000" spellcheck="true" class="mt-4 min-h-80 w-full rounded-xl border border-violet-200 bg-violet-50/20 p-4 text-sm leading-7 text-gray-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" placeholder="Здесь появится сгенерированное письмо."></textarea><div class="mt-3 flex items-center justify-between gap-3"><p class="text-xs text-gray-500">Абзацы сохраняются. Перед отправкой можно отредактировать текст.</p><button id="cover-letter-save" type="button" class="shrink-0 rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm font-medium text-violet-800 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50">Сохранить</button></div></div><footer class="flex flex-wrap items-end justify-between gap-3 border-t border-gray-200 px-5 py-4"><label class="block min-w-64 text-sm font-medium text-gray-700">AI для письма<select id="cover-letter-connection" class="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"></select></label><button id="cover-letter-create" type="button" class="rounded-lg bg-violet-700 px-4 py-2 text-sm font-medium text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-60">Создать письмо</button></footer></section>';
+  document.body.append(dialog);
+  ($('#cover-letter-close') as HTMLButtonElement).onclick = () => dialog.close();
+  ($('#cover-letter-connection') as HTMLSelectElement).onchange = event => { coverLetterConnectionId = (event.target as HTMLSelectElement).value; };
+  ($('#cover-letter-copy') as HTMLButtonElement).onclick = () => void navigator.clipboard.writeText(($('#cover-letter-text') as HTMLTextAreaElement).value).then(() => show('Письмо скопировано.')).catch(() => show('Не удалось скопировать текст.', true));
+  ($('#cover-letter-download') as HTMLButtonElement).onclick = () => { const job = coverLetterSubject ?? current; if (!job) return; const blob = new Blob([($('#cover-letter-text') as HTMLTextAreaElement).value], { type: 'text/plain;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = coverLetterFileName(job); link.click(); URL.revokeObjectURL(link.href); };
+  ($('#cover-letter-save') as HTMLButtonElement).onclick = () => void saveCoverLetterText();
+  ($('#cover-letter-create') as HTMLButtonElement).onclick = () => void generateCoverLetter();
+}
 const jobRouteId = () => location.pathname.match(/^\/jobs\/([^/]+)$/)?.[1] ?? null;
 function resetPageScroll() {
   window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
@@ -1024,6 +1061,7 @@ async function normalizeCurrentLocation(buttonSelector = '#detail-geo-ai') { if 
 setupResultOutcomeField();
 setupGeoEditor();
 setupNotesPanel();
+setupCoverLetterDialog();
 document.addEventListener('DOMContentLoaded', () => {
   setupViewControls();
   window.addEventListener('popstate', () => { const id = jobRouteId(); if (id) void openJob(id, false).catch(error => show(error.message, true)); else if (location.pathname === '/settings') renderSettingsTabs(); else if (location.pathname === '/stats') renderStatsPage(); else if (location.pathname === '/') void showJobsList().catch(error => show(error.message, true)); });
@@ -1067,7 +1105,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#generic-ai-parse-button').onclick = () => void parseGenericCard();
   $('#ai-snapshot-parse').onclick = () => void parseSnapshotCard();
   $('#detail-match-trigger').onclick = () => { if (current) void openMatchDialog(current.id).catch(error => show(error.message, true)); };
-  $('#cover-letter-generate').onclick = () => void generateCoverLetter();
+  $('#cover-letter-generate').onclick = () => void openCoverLetterDialog().catch(error => show(error.message, true));
   $('#event-add-toggle').onclick = () => { $('#event-form').classList.toggle('hidden'); };
   $('#back').onclick = () => void showJobsList(true).catch(error => show(error.message, true));
   $('#update').onclick = () => void update().catch(error => show(error.message, true)); $('#add-event').onclick = () => void addTimelineEvent().catch(error => show(error.message, true));
