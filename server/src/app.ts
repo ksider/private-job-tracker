@@ -108,8 +108,12 @@ export function buildApp(config: AppConfig) {
     return { from: from ?? null, to: to ?? null, dimension, applications: filteredRows.length, counted_applications: countedApplications, tag_counting_note: dimension === 'tag', filters: { sources: [...new Set(allRows.map(row => row.source || 'Не указан'))].sort(), countries: [...countryMap.entries()].map(([name, code]) => ({ name, code })).sort((left, right) => left.name.localeCompare(right.name, 'ru')), tags: [...tagMap.entries()].map(([id, tag]) => ({ id, ...tag })).sort((left, right) => left.name.localeCompare(right.name, 'ru')) }, nodes: [...nodes.values()], links: [...links.values()] };
   };
   const runImportAutomation = async (jobId: string) => {
-    const settings = db.settings(); let job = db.get(jobId); if (!job) return;
-    try {
+    const settings = db.settings(); const existingJob = db.get(jobId); if (!existingJob) return; let job = existingJob;
+    const runScenario = async (scenario: string, action: () => Promise<void>) => {
+      try { await action(); }
+      catch (error) { app.log.warn({ err: error, jobId, scenario }, 'Automatic AI scenario failed'); }
+    };
+    await runScenario('generic_parse', async () => {
       if (settings.auto_generic_parse_on_import && job.source === 'generic') {
         const connection = db.getConnection(settings.generic_parse_connection_id ?? settings.default_connection_id ?? ''); const snapshot = db.latestSnapshot(job.id);
         if (connection?.enabled && (snapshot?.raw_text ?? job.description_text ?? '').trim()) {
@@ -118,6 +122,8 @@ export function buildApp(config: AppConfig) {
           if (Object.keys(patch).length) db.update(job.id, patch); job = db.get(jobId)!;
         }
       }
+    });
+    await runScenario('tags', async () => {
       if (settings.auto_tags_on_import && job.description_text?.trim()) {
         const connection = db.getConnection(settings.tag_connection_id ?? settings.default_connection_id ?? ''); const availableTags = db.listTags();
         if (connection?.enabled) {
@@ -128,18 +134,21 @@ export function buildApp(config: AppConfig) {
           if (tagIds.length) db.setTags(job.id, [...existingTagIds, ...tagIds]);
         }
       }
-      // Tags and geography share a provider connection, but intentionally make
-      // separate requests: one classifies reusable tags, the other normalizes
-      // only the geographic evidence. Turning on automatic tags enables both.
+    });
+    // Tags and geography share a provider connection, but intentionally make
+    // separate requests: one classifies reusable tags, the other normalizes
+    // only the geographic evidence. Turning on automatic tags enables both.
+    await runScenario('location', async () => {
       if (settings.auto_tags_on_import && job.geo_source !== 'manual' && (job.location?.trim() || job.description_text?.trim())) {
-        try { await normalizeLocationForJob(job.id); job = db.get(jobId)!; }
-        catch (error) { app.log.warn({ err: error, jobId }, 'Automatic AI location normalization failed'); }
+        await normalizeLocationForJob(job.id); job = db.get(jobId)!;
       }
+    });
+    await runScenario('match', async () => {
       if (settings.auto_match_on_import && job.description_text?.trim()) {
         const connection = db.getConnection(settings.default_connection_id ?? '');
         if (connection?.enabled && connection.profile_consent_at) { const profile = await profiles.load(); const model = settings.default_model || connection.model; const limitedConnection = connectionFor(connection, model); const analysisId = db.startAnalysis({ job_id: job.id, provider_connection_id: connection.id, provider_type: connection.provider_type, model, profile_hash: profile.hash, job_description_hash: hashJobDescription(job.description_text), prompt_version: MATCH_PROMPT_VERSION }); try { const matched = await matchJob({ provider: providers.limited(limitedConnection), connection: limitedConnection, descriptionText: job.description_text, profile }); db.completeAnalysis(analysisId, matched.result); } catch (error) { db.failAnalysis(analysisId, error instanceof Error ? error.message : 'Automatic AI Match failed.'); } }
       }
-    } catch (error) { app.log.warn({ err: error, jobId }, 'Automatic AI processing failed'); }
+    });
   };
   app.register(fastifyStatic, { root: config.webRoot ?? path.resolve(here, '../../web/dist'), prefix: '/assets/' });
   // The API is called by the installed MV3 extension. Only Chrome extension origins
