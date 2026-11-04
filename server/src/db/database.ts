@@ -225,6 +225,17 @@ export class JobDatabase {
       AND (COALESCE(location, '') <> '' OR COALESCE(description_text, '') <> '') ${archiveClause}
       ORDER BY created_at ASC LIMIT ?`).all(limit) as JobRow[];
   }
+  languageBackfillCandidates(options: { includeArchived?: boolean; limit?: number } = {}) {
+    const archiveClause = options.includeArchived ? '' : "AND status != 'archived'";
+    const limit = Math.max(1, Math.min(options.limit ?? 10_000, 100_000));
+    return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id), jobs.created_at) AS last_event_at,
+      CASE jobs.status WHEN 'saved' THEN jobs.created_at ELSE COALESCE(jobs.updated_at, jobs.created_at) END AS stage_started_at
+      FROM jobs WHERE COALESCE(TRIM(description_text), '') <> '' ${archiveClause}
+      ORDER BY created_at ASC LIMIT ?`).all(limit) as JobRow[];
+  }
+  setPostingLanguage(id: string, languageCode: string) {
+    this.db.prepare('UPDATE jobs SET posting_language_code=? WHERE id=?').run(languageCode, id);
+  }
   get(id: string) { return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id), jobs.created_at) AS last_event_at,
     CASE jobs.status
       WHEN 'saved' THEN jobs.created_at

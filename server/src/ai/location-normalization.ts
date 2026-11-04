@@ -4,6 +4,26 @@ import { LocationNormalizationResultSchema, type LocationNormalizationResult } f
 // A small guard for a frequent failure mode of compact models: Latin Serbian
 // prose is often labelled English when an English job title is nearby. These
 // markers must occur in the prose itself; location and employer are ignored.
+const dominantScriptLanguage = (descriptionText: string | null) => {
+  const text = descriptionText ?? '';
+  const letters = text.match(/\p{L}/gu)?.length ?? 0;
+  if (letters < 8) return null;
+  const scripts: Array<[RegExp, string]> = [
+    [/[\u0590-\u05ff]/g, 'he'],
+    [/[\u0600-\u06ff]/g, 'ar'],
+    [/[\u0370-\u03ff]/g, 'el'],
+    [/[\u0530-\u058f]/g, 'hy'],
+    [/[\u10a0-\u10ff]/g, 'ka'],
+    [/[\u3040-\u30ff]/g, 'ja'],
+    [/[\uac00-\ud7af\u1100-\u11ff]/g, 'ko'],
+    [/[\u4e00-\u9fff]/g, 'zh'],
+  ];
+  const winner = scripts
+    .map(([pattern, code]) => ({ code, count: text.match(pattern)?.length ?? 0 }))
+    .sort((left, right) => right.count - left.count)[0];
+  return winner && winner.count >= 4 && winner.count / letters >= 0.55 ? winner.code : null;
+};
+
 const evidentSerbianLatin = (descriptionText: string | null) => {
   const text = descriptionText?.toLocaleLowerCase('sr') ?? '';
   const hasSerbianInflection = /\bunapred\p{L}*\b/u.test(text);
@@ -11,6 +31,9 @@ const evidentSerbianLatin = (descriptionText: string | null) => {
   const diacritics = (text.match(/[čćđšž]/g) ?? []).length;
   return hasSerbianInflection && bcsMarkers >= 1 && diacritics >= 3 ? 'sr' : null;
 };
+
+/** Returns a language only when the vacancy prose itself gives strong evidence. */
+export const detectEvidentPostingLanguage = (descriptionText: string | null) => dominantScriptLanguage(descriptionText) ?? evidentSerbianLatin(descriptionText);
 
 /**
  * A deliberately separate enrichment layer: it must not reinterpret or
@@ -27,5 +50,5 @@ export async function normalizeJobLocation(input: { provider: AIProvider; connec
     user: `UNTRUSTED ORIGINAL LOCATION START\n${location || 'Not captured'}\nUNTRUSTED ORIGINAL LOCATION END\n\nUNTRUSTED VACANCY PROSE START\n${description || 'Not captured'}\nUNTRUSTED VACANCY PROSE END`,
   });
   const result = LocationNormalizationResultSchema.parse(raw);
-  return { ...result, language_code: evidentSerbianLatin(input.descriptionText) ?? result.language_code };
+  return { ...result, language_code: detectEvidentPostingLanguage(input.descriptionText) ?? result.language_code };
 }
