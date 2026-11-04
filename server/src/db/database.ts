@@ -4,9 +4,9 @@ import type { MatchClassification, MatchResult, ProviderType } from '../ai/schem
 import { calculateCohortAnalytics } from '../analytics/cohorts.js';
 
 export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: string; title?: string; company?: string; location?: string; workplaceType?: string; employmentType?: string; descriptionHtml?: string; descriptionText?: string; easyApply?: boolean; warnings: string[]; parseStatus: 'parsed' | 'partial' | 'parse_failed'; parserVersion: string };
-export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; geo_source: 'ai' | 'manual' | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; parse_status: string; last_event_at: string; stage_started_at: string };
+export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; posting_language_code: string | null; geo_source: 'ai' | 'manual' | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; parse_status: string; last_event_at: string; stage_started_at: string };
 export type ApplicationEffectivenessRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; result_outcome: JobRow['result_outcome']; applied_at: string; response_at: string | null; ai_classification: MatchClassification | null; tags: string[] };
-export type ApplicationSankeyRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; result_outcome: JobRow['result_outcome']; applied_at: string; reached_hr: number; reached_technical: number; reached_final: number; reached_follow_up: number; tags: Array<{ id: string; name: string; color: string }> };
+export type ApplicationSankeyRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; posting_language_code: string | null; result_outcome: JobRow['result_outcome']; applied_at: string; reached_hr: number; reached_technical: number; reached_final: number; reached_follow_up: number; tags: Array<{ id: string; name: string; color: string }> };
 export type CohortApplicationRow = { id: string; applied_at: string; application_date_source: 'applied_event' | 'created_at'; first_response_event_at: string | null; first_response_email_at: string | null; first_hr_event_at: string | null; first_hr_email_at: string | null; has_undated_hr_progression: number };
 export type JobEventRow = { id: string; job_id: string; type: JobEventType; occurred_at: string; note: string; created_at: string };
 export type InterviewAppointmentStatus = 'proposed' | 'confirmed' | 'cancelled';
@@ -28,7 +28,7 @@ export class JobDatabase {
   private migrate() {
     this.db.exec(`CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY, source TEXT NOT NULL, source_job_id TEXT, source_url TEXT NOT NULL,
-      title TEXT, company TEXT, location TEXT, geo_country_code TEXT, geo_country TEXT, geo_region TEXT, geo_city TEXT, geo_source TEXT, workplace_type TEXT, employment_type TEXT, application_id TEXT, result_outcome TEXT,
+      title TEXT, company TEXT, location TEXT, geo_country_code TEXT, geo_country TEXT, geo_region TEXT, geo_city TEXT, posting_language_code TEXT, geo_source TEXT, workplace_type TEXT, employment_type TEXT, application_id TEXT, result_outcome TEXT,
       description_html TEXT, description_text TEXT, status TEXT NOT NULL DEFAULT 'saved', interview_stage TEXT, notes TEXT NOT NULL DEFAULT '',
       captured_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, parse_status TEXT NOT NULL DEFAULT 'partial');
       CREATE UNIQUE INDEX IF NOT EXISTS jobs_linkedin_source_id ON jobs(source, source_job_id) WHERE source_job_id IS NOT NULL;
@@ -85,6 +85,7 @@ export class JobDatabase {
     if (!jobColumns.some(column => column.name === 'geo_country')) this.db.exec('ALTER TABLE jobs ADD COLUMN geo_country TEXT');
     if (!jobColumns.some(column => column.name === 'geo_region')) this.db.exec('ALTER TABLE jobs ADD COLUMN geo_region TEXT');
     if (!jobColumns.some(column => column.name === 'geo_city')) this.db.exec('ALTER TABLE jobs ADD COLUMN geo_city TEXT');
+    if (!jobColumns.some(column => column.name === 'posting_language_code')) this.db.exec('ALTER TABLE jobs ADD COLUMN posting_language_code TEXT');
     if (!jobColumns.some(column => column.name === 'geo_source')) this.db.exec('ALTER TABLE jobs ADD COLUMN geo_source TEXT');
     const snapshotColumns = this.db.prepare('PRAGMA table_info(snapshots)').all() as Array<{ name: string }>;
     if (!snapshotColumns.some(column => column.name === 'page_title')) this.db.exec('ALTER TABLE snapshots ADD COLUMN page_title TEXT');
@@ -174,7 +175,7 @@ export class JobDatabase {
     this.db.prepare('INSERT INTO snapshots (id,job_id,source,source_url,content_type,page_title,raw_html,raw_text,collector_version,parser_version,parse_status,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, parsed.source, parsed.sourceUrl, 'job', raw.pageTitle ?? null, raw.html, raw.text, raw.collectorVersion, parsed.parserVersion, parsed.parseStatus, raw.capturedAt, now);
     return { jobId, action };
   }
-  list(filters: { search?: string; status?: string; source?: string; tag?: string; country?: string | string[]; match?: string | string[]; order?: string; archive?: string }) {
+  list(filters: { search?: string; status?: string; source?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; order?: string; archive?: string }) {
     const where: string[] = []; const values: unknown[] = [];
     if (filters.search) { where.push('(title LIKE ? OR company LIKE ?)'); values.push(`%${filters.search}%`, `%${filters.search}%`); }
     if (filters.status) { where.push('status = ?'); values.push(filters.status); }
@@ -187,6 +188,13 @@ export class JobDatabase {
       const alternatives: string[] = []; const codes = countries.filter(country => country !== '__unknown__');
       if (countries.includes('__unknown__')) alternatives.push("geo_country_code IS NULL OR TRIM(geo_country_code) = ''");
       if (codes.length) { alternatives.push(`geo_country_code IN (${codes.map(() => '?').join(',')})`); values.push(...codes.map(country => country.toUpperCase())); }
+      where.push(`(${alternatives.join(' OR ')})`);
+    }
+    const languages = [...new Set((Array.isArray(filters.language) ? filters.language : filters.language ? [filters.language] : []).map(language => language.trim().toLowerCase()).filter(Boolean))];
+    if (languages.length) {
+      const alternatives: string[] = []; const codes = languages.filter(language => language !== '__unknown__');
+      if (languages.includes('__unknown__')) alternatives.push("posting_language_code IS NULL OR TRIM(posting_language_code) = ''");
+      if (codes.length) { alternatives.push(`LOWER(posting_language_code) IN (${codes.map(() => '?').join(',')})`); values.push(...codes); }
       where.push(`(${alternatives.join(' OR ')})`);
     }
     if (filters.archive === 'only') where.push("status = 'archived'");
@@ -204,12 +212,13 @@ export class JobDatabase {
   }
   jobOptions() { return this.db.prepare("SELECT id, company, title FROM jobs WHERE status != 'archived' ORDER BY captured_at DESC").all() as Array<Pick<JobRow, 'id' | 'company' | 'title'>>; }
   countryFilters() { return this.db.prepare("SELECT geo_country AS name, geo_country_code AS code FROM jobs WHERE status != 'archived' GROUP BY geo_country, geo_country_code ORDER BY COALESCE(geo_country, '') COLLATE NOCASE ASC").all() as Array<{ name: string | null; code: string | null }>; }
+  languageFilters() { return this.db.prepare("SELECT posting_language_code AS code FROM jobs WHERE status != 'archived' GROUP BY posting_language_code ORDER BY COALESCE(posting_language_code, '') COLLATE NOCASE ASC").all() as Array<{ code: string | null }>; }
   geographyBackfillCandidates(options: { includeArchived?: boolean; limit?: number } = {}) {
     const archiveClause = options.includeArchived ? '' : "AND status != 'archived'";
     const limit = Math.max(1, Math.min(options.limit ?? 10_000, 100_000));
     return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id), jobs.created_at) AS last_event_at,
       CASE jobs.status WHEN 'saved' THEN jobs.created_at ELSE COALESCE(jobs.updated_at, jobs.created_at) END AS stage_started_at
-      FROM jobs WHERE geo_source IS NULL AND geo_country_code IS NULL AND geo_country IS NULL AND geo_region IS NULL AND geo_city IS NULL
+      FROM jobs WHERE (posting_language_code IS NULL OR (geo_source IS NULL AND geo_country_code IS NULL AND geo_country IS NULL AND geo_region IS NULL AND geo_city IS NULL))
       AND (COALESCE(location, '') <> '' OR COALESCE(description_text, '') <> '') ${archiveClause}
       ORDER BY created_at ASC LIMIT ?`).all(limit) as JobRow[];
   }
@@ -274,7 +283,7 @@ export class JobDatabase {
       WHERE (jobs.status IN ('sent', 'interview', 'result') OR jobs.result_outcome IS NOT NULL
         OR (jobs.status='archived' AND EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up'))))
         AND NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
-    ) SELECT jobs.id, jobs.source, jobs.geo_country_code, jobs.geo_country, CASE WHEN jobs.result_outcome IS NOT NULL THEN jobs.result_outcome WHEN jobs.status='archived' THEN 'rejected' ELSE NULL END AS result_outcome, applications.applied_at,
+    ) SELECT jobs.id, jobs.source, jobs.geo_country_code, jobs.geo_country, jobs.posting_language_code, CASE WHEN jobs.result_outcome IS NOT NULL THEN jobs.result_outcome WHEN jobs.status='archived' THEN 'rejected' ELSE NULL END AS result_outcome, applications.applied_at,
       CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='hr_screening' AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_hr,
       CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='interview' AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_technical,
       CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='final_interview' AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_final,
@@ -355,7 +364,7 @@ export class JobDatabase {
     const geoTouched = patch.geo_country_code !== undefined || patch.geo_country !== undefined || patch.geo_region !== undefined || patch.geo_city !== undefined;
     const geoChanged = geoTouched && (patch.geo_country_code !== undefined && patch.geo_country_code !== old.geo_country_code || patch.geo_country !== undefined && patch.geo_country !== old.geo_country || patch.geo_region !== undefined && patch.geo_region !== old.geo_region || patch.geo_city !== undefined && patch.geo_city !== old.geo_city);
     const geoSource = patch.geo_source === undefined ? (geoChanged ? 'manual' : old.geo_source) : patch.geo_source;
-    this.db.prepare('UPDATE jobs SET source_url=?, title=?, company=?, location=?, geo_country_code=?, geo_country=?, geo_region=?, geo_city=?, geo_source=?, employment_type=?, workplace_type=?, application_id=?, result_outcome=?, status=?, interview_stage=?, archive_reason=?, archive_seen_at=?, notes=?, created_at=?, updated_at=? WHERE id=?').run(patch.source_url ?? old.source_url, patch.title ?? old.title, patch.company === undefined ? old.company : patch.company, patch.location === undefined ? old.location : patch.location, patch.geo_country_code === undefined ? old.geo_country_code : patch.geo_country_code, patch.geo_country === undefined ? old.geo_country : patch.geo_country, patch.geo_region === undefined ? old.geo_region : patch.geo_region, patch.geo_city === undefined ? old.geo_city : patch.geo_city, geoSource, patch.employment_type === undefined ? old.employment_type : patch.employment_type, patch.workplace_type === undefined ? old.workplace_type : patch.workplace_type, patch.application_id === undefined ? old.application_id : patch.application_id, patch.result_outcome === undefined ? old.result_outcome : patch.result_outcome, status, interviewStage, archiveReason, archiveSeenAt, patch.notes ?? old.notes, patch.created_at ?? old.created_at, now, id);
+    this.db.prepare('UPDATE jobs SET source_url=?, title=?, company=?, location=?, geo_country_code=?, geo_country=?, geo_region=?, geo_city=?, posting_language_code=?, geo_source=?, employment_type=?, workplace_type=?, application_id=?, result_outcome=?, status=?, interview_stage=?, archive_reason=?, archive_seen_at=?, notes=?, created_at=?, updated_at=? WHERE id=?').run(patch.source_url ?? old.source_url, patch.title ?? old.title, patch.company === undefined ? old.company : patch.company, patch.location === undefined ? old.location : patch.location, patch.geo_country_code === undefined ? old.geo_country_code : patch.geo_country_code, patch.geo_country === undefined ? old.geo_country : patch.geo_country, patch.geo_region === undefined ? old.geo_region : patch.geo_region, patch.geo_city === undefined ? old.geo_city : patch.geo_city, patch.posting_language_code === undefined ? old.posting_language_code : patch.posting_language_code, geoSource, patch.employment_type === undefined ? old.employment_type : patch.employment_type, patch.workplace_type === undefined ? old.workplace_type : patch.workplace_type, patch.application_id === undefined ? old.application_id : patch.application_id, patch.result_outcome === undefined ? old.result_outcome : patch.result_outcome, status, interviewStage, archiveReason, archiveSeenAt, patch.notes ?? old.notes, patch.created_at ?? old.created_at, now, id);
     if (status === 'interview' && interviewStage && interviewStage !== old.interview_stage) this.insertEvent(id, interviewStage, now);
     else if (patch.status && patch.status !== old.status) { const eventType: Partial<Record<JobStatus, JobEventType>> = { sent: 'applied', result: 'result' }; const event = eventType[status]; if (event) this.insertEvent(id, event, now); }
     return this.get(id);

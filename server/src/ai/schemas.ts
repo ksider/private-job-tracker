@@ -28,6 +28,7 @@ export const LocationNormalizationResultSchema = z.object({
   country: GenericParseTextSchema,
   region: GenericParseTextSchema,
   city: GenericParseTextSchema,
+  language_code: z.string().trim().regex(/^[A-Za-z]{2}$/).nullable().optional().catch(null).transform(value => value ? value.toLowerCase() : null),
 });
 export type LocationNormalizationResult = z.infer<typeof LocationNormalizationResultSchema>;
 
