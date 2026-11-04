@@ -11,7 +11,9 @@ export const GenericParseRequestSchema = z.object({ connection_id: z.string().uu
 export const LocationNormalizeRequestSchema = z.object({ model: z.string().trim().max(200).optional() });
 export const StrategyRequestSchema = z.object({ connection_id: z.string().uuid() });
 const AiTagNameSchema = z.string().trim().max(60).transform(value => value.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim()).pipe(z.string().min(1).max(60));
-export const TagSuggestionsResultSchema = z.object({ tag_ids: z.array(z.string().uuid()).max(20).default([]), new_tags: z.array(AiTagNameSchema).max(20).default([]) });
+// Models occasionally return an existing tag name instead of its UUID. The
+// caller resolves names against the supplied registry and ignores unknowns.
+export const TagSuggestionsResultSchema = z.object({ tag_ids: z.array(z.string().trim().min(1).max(100)).max(20).default([]), new_tags: z.array(AiTagNameSchema).max(20).default([]) });
 const GenericParseTextSchema = z.string().trim().max(500).nullable().optional().catch(null).transform(value => value || null);
 export const GenericParseResultSchema = z.object({
   title: GenericParseTextSchema,
