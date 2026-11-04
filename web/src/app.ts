@@ -27,7 +27,7 @@ type ProfileSummary = { configured: true; source: 'uploaded' | 'file'; profile_i
 type Tag = { id: string; name: string; color: string; created_at: string; updated_at: string; job_count?: number };
 type GroupBy = '' | 'tag' | 'company' | 'country' | 'region' | 'language' | 'source' | 'ai_match' | 'month';
 type SortBy = 'newest' | 'oldest' | 'updated' | 'company' | 'location' | 'title' | 'waiting';
-type Job = { id: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; posting_language_code: string | null; geo_source: 'ai' | 'manual' | null; source: string; source_url: string; status: Status; interview_stage: InterviewStage | null; application_id: string | null; result_outcome: string | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; notes: string; employment_type: string | null; workplace_type: string | null; description_html: string | null; created_at: string; captured_at: string; parse_status: string; last_event_at: string; stage_started_at: string; tags: Tag[]; events?: JobEvent[]; appointments?: InterviewAppointment[]; next_interview?: InterviewAppointment | null; ai_match?: AiMatch | null };
+type Job = { id: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; posting_language_code: string | null; geo_source: 'ai' | 'manual' | null; source: string; source_url: string; status: Status; interview_stage: InterviewStage | null; application_id: string | null; result_outcome: string | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; notes: string; cover_letter_text: string | null; cover_letter_model: string | null; cover_letter_updated_at: string | null; employment_type: string | null; workplace_type: string | null; description_html: string | null; created_at: string; captured_at: string; parse_status: string; last_event_at: string; stage_started_at: string; tags: Tag[]; events?: JobEvent[]; appointments?: InterviewAppointment[]; next_interview?: InterviewAppointment | null; ai_match?: AiMatch | null };
 type JobOption = Pick<Job, 'id' | 'company' | 'title'>;
 type CountryFilterOption = { name: string | null; code: string | null };
 const stages: Array<{ status: Exclude<Status, 'archived'>; label: string; next?: Status; nextLabel?: string }> = [{ status: 'saved', label: 'Сохранено', next: 'sent', nextLabel: 'Отправил' }, { status: 'sent', label: 'Отправлено', next: 'interview', nextLabel: 'Интервью' }, { status: 'interview', label: 'Интервью', next: 'result', nextLabel: 'В результат' }, { status: 'result', label: 'Результат' }];
@@ -459,6 +459,30 @@ function renderInterviewAppointments(job: Job) {
   form.onsubmit = event => { event.preventDefault(); const start = ($('#appointment-start') as HTMLInputElement).value; if (!start) return; const body = { stage: ($('#appointment-stage') as HTMLSelectElement).value, starts_at: new Date(start).toISOString(), time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone, format: ($('#appointment-format') as HTMLSelectElement).value, meeting_url: ($('#appointment-url') as HTMLInputElement).value.trim(), note: ($('#appointment-note') as HTMLInputElement).value.trim() }; const id = ($('#appointment-id') as HTMLInputElement).value; void api(id ? `/api/jobs/${job.id}/interviews/${id}` : `/api/jobs/${job.id}/interviews`, { method: id ? 'PATCH' : 'POST', body: JSON.stringify(body) }).then(() => openJob(job.id, false)).then(() => show(id ? 'Встреча обновлена.' : 'Встреча назначена.')).catch(error => show(error.message, true)); };
 }
 function renderNotes(notes: string) { const target = $('#notes-display'); const entries = notes.trim().split(/\n{2,}/).filter(Boolean); target.innerHTML = entries.length ? entries.map(note => `<p class="rounded-lg bg-gray-50 p-3 text-sm text-gray-700">${escape(note).replace(/\n/g, '<br>')}</p>`).join('') : '<p class="text-sm text-gray-500">Заметок пока нет.</p>'; }
+function renderCoverLetter(job: Job) {
+  const panel = $('#cover-letter-panel'); const generate = $('#cover-letter-generate') as HTMLButtonElement;
+  panel.classList.toggle('hidden', !job.cover_letter_text);
+  if (!job.cover_letter_text) { panel.replaceChildren(); generate.textContent = 'AI письмо'; return; }
+  panel.innerHTML = `<div class="rounded-xl border border-violet-200 bg-violet-50/40 p-3"><div class="flex flex-wrap items-center justify-between gap-2"><div><h4 class="text-sm font-semibold text-violet-950">Cover letter</h4><p class="mt-0.5 text-xs text-violet-800">${job.cover_letter_updated_at ? `${formatDateTime(job.cover_letter_updated_at)} · ` : ''}${escape(job.cover_letter_model ?? 'AI')}</p></div><div class="flex flex-wrap gap-2"><button id="cover-letter-copy" type="button" class="rounded-md border border-violet-300 bg-white px-2.5 py-1.5 text-xs font-medium text-violet-800 hover:bg-violet-50">Копировать</button><button id="cover-letter-download" type="button" class="rounded-md border border-violet-300 bg-white px-2.5 py-1.5 text-xs font-medium text-violet-800 hover:bg-violet-50">.txt</button></div></div><textarea id="cover-letter-text" maxlength="20000" class="mt-3 min-h-56 w-full rounded-lg border border-violet-200 bg-white p-3 text-sm leading-6 text-gray-800 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"></textarea><div class="mt-2 flex justify-end"><button id="cover-letter-save" type="button" class="rounded-md bg-violet-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-800">Сохранить текст</button></div></div>`;
+  const text = $('#cover-letter-text') as HTMLTextAreaElement; text.value = job.cover_letter_text;
+  ($('#cover-letter-copy') as HTMLButtonElement).onclick = () => void navigator.clipboard.writeText(text.value).then(() => show('Cover letter скопирован.')).catch(() => show('Не удалось скопировать текст.', true));
+  ($('#cover-letter-download') as HTMLButtonElement).onclick = () => { const blob = new Blob([text.value], { type: 'text/plain;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `cover-letter-${(job.company || job.title || 'job').replace(/[^a-z0-9]+/gi, '-').replace(/(^-|-$)/g, '').toLowerCase() || 'job'}.txt`; link.click(); URL.revokeObjectURL(link.href); };
+  ($('#cover-letter-save') as HTMLButtonElement).onclick = () => { const button = $('#cover-letter-save') as HTMLButtonElement; button.disabled = true; void api(`/api/jobs/${job.id}`, { method: 'PATCH', body: JSON.stringify({ cover_letter_text: text.value.trim() || null }) }).then((updated: Job) => { current = current?.id === updated.id ? { ...current, ...updated } : current; jobs = jobs.map(item => item.id === updated.id ? { ...item, ...updated } : item); renderCoverLetter(current ?? { ...job, ...updated }); show('Cover letter сохранён.'); }).catch(error => show(error.message, true)).finally(() => { if (button.isConnected) button.disabled = false; }); };
+  generate.textContent = 'Обновить AI письмо';
+}
+async function generateCoverLetter(consent = false): Promise<void> {
+  if (!current) return;
+  const button = $('#cover-letter-generate') as HTMLButtonElement; const original = button.textContent;
+  button.disabled = true; button.textContent = 'Генерируем…';
+  try {
+    const response = await fetch(`/api/jobs/${current.id}/cover-letter`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ consent }) });
+    const data = await response.json().catch(() => ({})) as { error?: string; requires_consent?: boolean; job?: Job };
+    if (response.status === 412 && data.requires_consent) { if (confirm(data.error)) return await generateCoverLetter(true); return; }
+    if (!response.ok || !data.job) throw new Error(data.error || 'Не удалось создать cover letter.');
+    current = { ...current, ...data.job, events: current.events }; jobs = jobs.map(job => job.id === current!.id ? { ...job, ...data.job } : job); renderCoverLetter(current); show('Cover letter создан. Проверьте текст перед отправкой.');
+  } catch (error) { show(error instanceof Error ? error.message : 'Не удалось создать cover letter.', true); }
+  finally { if (button.isConnected) { button.disabled = false; button.textContent = current?.cover_letter_text ? 'Обновить AI письмо' : original; } }
+}
 function closeViewMenus(except?: HTMLDetailsElement) { document.querySelectorAll<HTMLDetailsElement>('#view-controls details[open]').forEach(menu => { if (menu !== except) menu.open = false; }); }
 function renderBoardDensityToggle() { const button = document.querySelector('#card-density-toggle') as HTMLButtonElement | null; if (!button) return; const visible = mode === 'board' && !archiveMode; button.classList.toggle('hidden', !visible); button.className = `${visible ? '' : 'hidden '}rounded-lg border p-2 text-gray-700 hover:bg-gray-50 ${viewState.compactCards ? 'border-blue-700 bg-blue-700 text-white hover:bg-blue-800' : 'border-gray-300 bg-white'}`; button.title = viewState.compactCards ? 'Обычные карточки' : 'Компактные карточки'; button.setAttribute('aria-label', button.title); button.setAttribute('aria-pressed', String(viewState.compactCards)); }
 function setupViewControls() {
@@ -928,7 +952,10 @@ function setupNotesPanel() {
   toggle.title = 'Добавить заметку'; toggle.setAttribute('aria-label', 'Добавить заметку');
   const notesSection = document.createElement('section'); notesSection.className = 'mt-5 border-t border-gray-200 pt-4';
   const header = document.createElement('div'); header.className = 'flex items-center justify-between gap-3'; header.innerHTML = '<h3 class="text-sm font-semibold text-gray-900">Заметки</h3>';
-  header.append(toggle); notesSection.append(header);
+  const actions = document.createElement('div'); actions.className = 'flex items-center gap-2';
+  const cover = document.createElement('button'); cover.id = 'cover-letter-generate'; cover.type = 'button'; cover.className = 'rounded-lg border border-violet-300 bg-white px-2.5 py-1.5 text-xs font-medium text-violet-800 hover:bg-violet-50 disabled:cursor-wait disabled:opacity-60'; cover.textContent = 'AI письмо';
+  actions.append(cover, toggle); header.append(actions); notesSection.append(header);
+  const coverPanel = document.createElement('section'); coverPanel.id = 'cover-letter-panel'; coverPanel.className = 'mt-3 hidden'; notesSection.append(coverPanel);
   const output = document.createElement('div'); output.id = 'notes-display'; output.className = 'mt-3 space-y-2'; notesSection.append(output);
   const input = document.createElement('textarea'); input.id = 'event-note'; input.maxLength = 20_000; input.placeholder = 'Новая заметка'; input.className = 'min-h-24 rounded-lg border border-gray-300 p-2.5 text-sm';
   const save = document.createElement('button'); save.id = 'add-event'; save.type = 'button'; save.className = 'rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-medium text-blue-800 hover:bg-blue-50'; save.textContent = 'Добавить заметку';
@@ -963,7 +990,7 @@ async function openJob(id: string, pushRoute = true) {
   ($('#detail-notes') as HTMLTextAreaElement).value = current.notes;
   $('#generic-ai-parse').classList.toggle('hidden', current.source !== 'generic'); $('#generic-ai-parse-status').textContent = ''; $('#generic-ai-parse-status').classList.remove('text-red-700');
   ($('#event-note') as HTMLTextAreaElement).value = ''; $('#event-form').classList.add('hidden');
-  renderDetailMatchTrigger(current); renderDetailStageTrail(current); renderInterviewAppointments(current); renderTimeline(current.events); renderNotes(current.notes); renderJobTags(current);
+  renderDetailMatchTrigger(current); renderDetailStageTrail(current); renderInterviewAppointments(current); renderTimeline(current.events); renderNotes(current.notes); renderCoverLetter(current); renderJobTags(current);
 }
 type GenericParseFields = { title: string | null; company: string | null; location: string | null; workplace_type: string | null; employment_type: string | null };
 async function parseGenericCard() {
@@ -1040,6 +1067,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#generic-ai-parse-button').onclick = () => void parseGenericCard();
   $('#ai-snapshot-parse').onclick = () => void parseSnapshotCard();
   $('#detail-match-trigger').onclick = () => { if (current) void openMatchDialog(current.id).catch(error => show(error.message, true)); };
+  $('#cover-letter-generate').onclick = () => void generateCoverLetter();
   $('#event-add-toggle').onclick = () => { $('#event-form').classList.toggle('hidden'); };
   $('#back').onclick = () => void showJobsList(true).catch(error => show(error.message, true));
   $('#update').onclick = () => void update().catch(error => show(error.message, true)); $('#add-event').onclick = () => void addTimelineEvent().catch(error => show(error.message, true));

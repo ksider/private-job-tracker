@@ -44,6 +44,7 @@ export const JobPatchSchema = z.object({
   workplace_type: JobTextField,
   application_id: JobTextField,
   result_outcome: z.enum(['rejected', 'offer', 'withdrawn', 'other']).nullable().optional(),
+  cover_letter_text: z.string().trim().max(20_000).nullable().optional(),
   source_url: z.string().url().max(4096).optional(),
   created_at: z.string().datetime().optional(),
   status: JobStatusSchema.optional(),

@@ -2,7 +2,7 @@ import path from 'node:path'; import { fileURLToPath } from 'node:url'; import {
 import Fastify from 'fastify'; import fastifyStatic from '@fastify/static';
 import { JobEventCreateSchema, JobPatchSchema, JobTagsSchema, SnapshotSchema, TagCreateSchema, TagPatchSchema } from '@job-tracker/shared';
 import { JobDatabase } from './db/database.js'; import { ParserRegistry } from './parsers/registry.js'; import { hasLinkedInEasyApplySignal } from './parsers/linkedin.js'; import { safeDescriptionHtml, sanitizeSnapshotHtml } from './security.js';
-import { hashJobDescription, matchJob, MATCH_PROMPT_VERSION } from './ai/job-matching.js'; import { parseGenericJob } from './ai/generic-parse.js'; import { parseSnapshotJob } from './ai/snapshot-parse.js'; import { normalizeJobLocation } from './ai/location-normalization.js'; import { analyzeApplicationStrategy, STRATEGY_PROMPT_VERSION } from './ai/strategy.js'; import { ProfileLoader, type LoadedProfile } from './ai/profile.js'; import { ProviderRegistry, validateProviderBaseUrl } from './ai/providers.js'; import { AiSettingsPatchSchema, ConnectionCreateSchema, ConnectionPatchSchema, GenericParseRequestSchema, LocationNormalizeRequestSchema, MatchRequestSchema, StrategyRequestSchema, TagSuggestionsRequestSchema, TagSuggestionsResultSchema } from './ai/schemas.js'; import { SecretStore } from './ai/secret-store.js';
+import { hashJobDescription, matchJob, MATCH_PROMPT_VERSION } from './ai/job-matching.js'; import { parseGenericJob } from './ai/generic-parse.js'; import { parseSnapshotJob } from './ai/snapshot-parse.js'; import { normalizeJobLocation } from './ai/location-normalization.js'; import { generateCoverLetter } from './ai/cover-letter.js'; import { analyzeApplicationStrategy, STRATEGY_PROMPT_VERSION } from './ai/strategy.js'; import { ProfileLoader, type LoadedProfile } from './ai/profile.js'; import { ProviderRegistry, validateProviderBaseUrl } from './ai/providers.js'; import { AiSettingsPatchSchema, ConnectionCreateSchema, ConnectionPatchSchema, CoverLetterRequestSchema, GenericParseRequestSchema, LocationNormalizeRequestSchema, MatchRequestSchema, StrategyRequestSchema, TagSuggestionsRequestSchema, TagSuggestionsResultSchema } from './ai/schemas.js'; import { SecretStore } from './ai/secret-store.js';
 import { EmailClassificationSchema, EmailReviewConfirmSchema, ImapSettingsSchema } from './email/schemas.js'; import { EmailSyncScheduler, EmailSyncService, imapErrorMessage } from './email/sync.js';
 import { InterviewAppointmentCreateSchema, InterviewAppointmentPatchSchema } from './interviews/schemas.js';
 import { BackupRestoreRequestSchema, BackupSettingsSchema, PortableBackupSchema } from './backups/schemas.js'; import { BackupScheduler, GoogleSheetsSyncService, backupErrorMessage } from './backups/sync.js';
@@ -18,6 +18,8 @@ const clientRequestId = (headers: Record<string, string | string[] | undefined>)
 };
 export function buildApp(config: AppConfig) {
   const app = Fastify({ logger: true, bodyLimit: 5_100_000 }); const db = new JobDatabase(config.databasePath); const registry = new ParserRegistry(); const providers = new ProviderRegistry(); const secrets = new SecretStore(config.aiSecretsKey ?? config.apiToken); const uploadedProfilePath = config.databasePath === ':memory:' ? undefined : path.join(path.dirname(config.databasePath), 'candidate-profile.json'); const profiles = new ProfileLoader(config.profilePath ?? path.resolve(here, '../../.ai/nikolai_semenov_master_profile_v1.json'), uploadedProfilePath);
+  const recoveredAnalyses = db.recoverInterruptedAnalyses();
+  if (recoveredAnalyses) app.log.warn({ count: recoveredAnalyses }, 'Recovered AI analyses interrupted by server restart');
   app.addHook('onRequest', async (request, reply) => {
     if (!request.url.startsWith('/api/')) return;
     apiRequestStartedAt.set(request, process.hrtime.bigint());
@@ -334,12 +336,41 @@ export function buildApp(config: AppConfig) {
       const message = error instanceof Error ? error.message : 'AI matching failed.';
       if (analysisId) db.failAnalysis(analysisId, message);
       app.log.warn({ err: error, jobId: job.id, connectionId: connection.id, provider: connection.provider_type, model }, 'AI matching failed');
+      if (message === 'Analysis is already running for this vacancy.') return reply.code(409).send({ error: 'AI Match is already running for this vacancy.' });
       const safeMessage = message.startsWith('This vacancy') || message.startsWith('AI provider request failed') || message.startsWith('AI provider returned') ? message : 'AI matching failed. Check the server log for details.';
       return reply.code(502).send({ error: safeMessage });
     }
   });
   app.get('/api/jobs/:id/ai-match', async (request, reply) => { const job = db.get((request.params as { id: string }).id); if (!job) return reply.code(404).send({ error: 'Job not found' }); const profile = await profiles.load().catch(() => undefined); return { analysis: analysisView(db.latestAnalysis(job.id), profile, job.description_text) }; });
   app.get('/api/jobs/:id/ai-match/history', async (request, reply) => { const job = db.get((request.params as { id: string }).id); if (!job) return reply.code(404).send({ error: 'Job not found' }); return { analyses: db.analysisHistory(job.id).map(analysis => analysisView(analysis)) }; });
+  app.post('/api/jobs/:id/cover-letter', async (request, reply) => {
+    const checked = CoverLetterRequestSchema.safeParse(request.body ?? {});
+    if (!checked.success) return reply.code(400).send({ error: 'Invalid cover letter request', details: checked.error.flatten() });
+    const job = db.get((request.params as { id: string }).id);
+    if (!job) return reply.code(404).send({ error: 'Job not found' });
+    const description = job.description_text?.trim() ?? '';
+    if (!description) return reply.code(422).send({ error: 'This vacancy has no captured text description for a cover letter.' });
+    const settings = db.settings();
+    let connection = db.getConnection(checked.data.connection_id ?? settings.default_connection_id ?? '');
+    if (!connection?.enabled) return reply.code(409).send({ error: 'Configure and select an enabled default AI provider first.' });
+    if (!connection.profile_consent_at) {
+      if (!checked.data.consent) return reply.code(412).send({ error: `Confirm that your candidate profile may be sent to ${connection.display_name}.`, requires_consent: true, connection_id: connection.id });
+      connection = db.giveProfileConsent(connection.id)!;
+    }
+    const model = checked.data.model || settings.default_model || connection.model;
+    try {
+      const profile = await profiles.load();
+      const limitedConnection = connectionFor(connection, model);
+      const result = await generateCoverLetter({ provider: providers.limited(limitedConnection), connection: limitedConnection, descriptionText: description, profile, title: job.title, company: job.company, languageCode: job.posting_language_code });
+      const updated = db.saveCoverLetter(job.id, result.letter, model)!;
+      return { job: jobView(updated), model };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Cover letter generation failed.';
+      app.log.warn({ err: error, jobId: job.id, connectionId: connection.id, provider: connection.provider_type, model }, 'AI cover letter generation failed');
+      const safeMessage = message.startsWith('AI provider') || message.startsWith('AI provider returned') ? message : 'Cover letter generation failed. Check the server log for details.';
+      return reply.code(502).send({ error: safeMessage });
+    }
+  });
   app.delete('/api/jobs/:id', async (request, reply) => db.delete((request.params as { id: string }).id) ? reply.code(204).send() : reply.code(404).send({ error: 'Job not found' }));
   app.post('/api/jobs/:id/reparse', async (request, reply) => { const job = db.get((request.params as { id: string }).id); const raw = db.latestSnapshot((request.params as { id: string }).id); if (!job || !raw) return reply.code(404).send({ error: 'Job or snapshot not found' }); const genericSelection = /data-snapshot-capture\s*=\s*(["'])selection\1/i.test(raw.raw_html); const fallbackPageTitle = [job.title, job.company, raw.source === 'linkedin' ? 'LinkedIn' : undefined].filter(Boolean).join(' | '); const snapshot = SnapshotSchema.parse({ schema_version: 1, source: genericSelection ? 'generic' : raw.source, content_type: 'job', url: raw.source_url, page_title: raw.page_title || fallbackPageTitle, captured_at: raw.captured_at, snapshot: { format: 'html', html: raw.raw_html, text: raw.raw_text }, metadata: { collector_version: 'reparse' } }); const parsed = registry.find(snapshot, { forceGeneric: genericSelection }).parse(snapshot); const result = db.import(parsed, { html: raw.raw_html, text: raw.raw_text, collectorVersion: 'reparse', capturedAt: raw.captured_at, pageTitle: snapshot.page_title }); if (parsed.source === 'linkedin' && parsed.easyApply) assignEasyApplyTag(result.jobId); return { success: true, job_id: result.jobId, action: result.action, warnings: parsed.warnings }; });
   app.post('/auth/logout', async () => ({ ok: true }));

@@ -6,6 +6,9 @@ export const ConnectionCreateSchema = z.object({ provider_type: ProviderTypeSche
 export const ConnectionPatchSchema = ConnectionCreateSchema.partial().refine(value => Object.keys(value).length > 0, 'At least one field is required');
 export const AiSettingsPatchSchema = z.object({ default_connection_id: z.string().uuid().nullable().optional(), default_model: z.string().trim().max(200).nullable().optional(), tag_connection_id: z.string().uuid().nullable().optional(), email_connection_id: z.string().uuid().nullable().optional(), generic_parse_connection_id: z.string().uuid().nullable().optional(), snapshot_parse_connection_id: z.string().uuid().nullable().optional(), auto_match_on_import: z.boolean().optional(), auto_tags_on_import: z.boolean().optional(), auto_generic_parse_on_import: z.boolean().optional(), auto_location_on_import: z.boolean().optional(), auto_email_classification: z.boolean().optional() }).refine(value => Object.keys(value).length > 0, 'At least one field is required');
 export const MatchRequestSchema = z.object({ connection_id: z.string().uuid().optional(), model: z.string().trim().max(200).optional(), consent: z.boolean().optional().default(false) });
+export const CoverLetterRequestSchema = z.object({ connection_id: z.string().uuid().optional(), model: z.string().trim().max(200).optional(), consent: z.boolean().optional().default(false) });
+export const CoverLetterResultSchema = z.object({ letter: z.string().trim().min(40).max(8_000) });
+export type CoverLetterResult = z.infer<typeof CoverLetterResultSchema>;
 export const TagSuggestionsRequestSchema = z.object({ connection_id: z.string().uuid().optional(), model: z.string().trim().max(200).optional() });
 export const GenericParseRequestSchema = z.object({ connection_id: z.string().uuid().optional(), model: z.string().trim().max(200).optional() });
 export const LocationNormalizeRequestSchema = z.object({ model: z.string().trim().max(200).optional() });
