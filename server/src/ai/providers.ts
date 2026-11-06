@@ -26,9 +26,14 @@ class OpenAiCompatibleProvider implements AIProvider {
     return (data.data?.map(model => model.id).filter((id): id is string => Boolean(id)) ?? data.models?.map(model => model.name).filter((id): id is string => Boolean(id)) ?? []).map(id => ({ id, name: id }));
   }
   async generateJson(connection: ProviderConnection, prompt: GenerationRequest) {
-    const body = { model: connection.model, temperature: connection.temperature ?? 0, max_tokens: connection.max_output_tokens, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }] };
-    const generate = (withResponseFormat: boolean) => request(endpoint(this.base(connection), '/chat/completions'), { method: 'POST', headers: this.headers(connection), body: JSON.stringify({ ...body, ...(withResponseFormat ? { response_format: { type: 'json_object' } } : {}) }) }, connection.timeout_ms) as Promise<{ choices?: Array<{ message?: { content?: string } }> }>;
-    let data: { choices?: Array<{ message?: { content?: string } }> };
+    // Nemotron's free OpenRouter route does not implement response_format, but
+    // it does implement function calling. Requiring a no-op function gives us
+    // syntactically valid JSON arguments instead of relying on prose prompts.
+    const forceToolJson = this.id === 'openrouter' && /^nvidia\/nemotron-3-ultra-550b-a55b:free$/i.test(connection.model);
+    const body = { model: connection.model, temperature: connection.temperature ?? 0, max_tokens: connection.max_output_tokens, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }], ...(forceToolJson ? { tools: [{ type: 'function', function: { name: 'return_structured_result', description: 'Return the requested result as this function’s JSON arguments. Do not write a prose answer.', parameters: { type: 'object', additionalProperties: true } } }], tool_choice: { type: 'function', function: { name: 'return_structured_result' } } } : {}) };
+    type Completion = { choices?: Array<{ finish_reason?: string; message?: { content?: string; tool_calls?: Array<{ function?: { name?: string; arguments?: unknown } }> } }> };
+    const generate = (withResponseFormat: boolean) => request(endpoint(this.base(connection), '/chat/completions'), { method: 'POST', headers: this.headers(connection), body: JSON.stringify({ ...body, ...(withResponseFormat ? { response_format: { type: 'json_object' } } : {}) }) }, connection.timeout_ms) as Promise<Completion>;
+    let data: Completion;
     try { data = await generate(!this.skipResponseFormat?.(connection)); }
     catch (error) {
       // Some OpenRouter routes (including free models) deliberately omit JSON
@@ -36,7 +41,13 @@ class OpenAiCompatibleProvider implements AIProvider {
       if (!responseFormatUnsupported(error)) throw error;
       data = await generate(false);
     }
-    const content = data.choices?.[0]?.message?.content; if (!content) throw new Error('AI provider returned no analysis content.'); return safeJson(content);
+    const message = data.choices?.[0]?.message;
+    const toolArguments = message?.tool_calls?.filter(call => call.function?.name === 'return_structured_result').map(call => call.function?.arguments).flatMap(argumentsValue => typeof argumentsValue === 'string' ? [argumentsValue] : argumentsValue && typeof argumentsValue === 'object' ? [JSON.stringify(argumentsValue)] : []) ?? [];
+    const candidates = [...toolArguments, ...(message?.content ? [message.content] : [])];
+    if (!candidates.length) throw new Error(`AI provider returned no analysis content${data.choices?.[0]?.finish_reason ? ` (finish reason: ${data.choices[0].finish_reason})` : ''}.`);
+    let error: unknown;
+    for (const candidate of candidates) { try { return safeJson(candidate); } catch (caught) { error = caught; } }
+    throw error;
   }
 }
 

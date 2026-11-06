@@ -34,7 +34,7 @@ try {
       try {
         const fields = await normalizeJobLocation({ provider: providers.limited(limitedConnection), connection: limitedConnection, location: job.location, descriptionText: job.description_text });
         const geoPatch = job.geo_source === 'manual' ? {} : { geo_country_code: fields.country_code, geo_country: fields.country, geo_region: fields.region, geo_city: fields.city, geo_source: 'ai' as const };
-        db.update(job.id, { ...geoPatch, posting_language_code: fields.language_code });
+        db.update(job.id, { ...geoPatch, posting_language_code: fields.language_code }, { touchActivity: false });
         completed += 1; if (!fields.country && !fields.region && !fields.city) empty += 1;
         console.log(`[${completed}/${candidates.length}] ${job.company ?? '—'} · ${job.title ?? '—'}`);
       } catch (error) { failed += 1; console.error(`Failed: ${job.id} · ${error instanceof Error ? error.message : 'Unknown error'}`); }

@@ -65,7 +65,7 @@ export function buildApp(config: AppConfig) {
     // A manual edit made while the provider was running wins over its result.
     const latest = db.get(jobId); if (!latest) throw new Error('Job not found');
     const geoPatch = latest.geo_source === 'manual' ? {} : { geo_country_code: fields.country_code, geo_country: fields.country, geo_region: fields.region, geo_city: fields.city, geo_source: 'ai' as const };
-    const updated = db.update(jobId, { ...geoPatch, posting_language_code: fields.language_code });
+    const updated = db.update(jobId, { ...geoPatch, posting_language_code: fields.language_code }, { touchActivity: false });
     return { job: updated!, fields, skipped: false, model: limitedConnection.model };
   };
   const effectivenessView = (from?: string, to?: string) => {
@@ -125,7 +125,7 @@ export function buildApp(config: AppConfig) {
         if (connection?.enabled && (snapshot?.raw_text ?? job.description_text ?? '').trim()) {
           const fields = await parseGenericJob({ provider: providers.limited(connectionFor(connection)), connection: connectionFor(connection), snapshotText: snapshot?.raw_text ?? job.description_text ?? '' });
           const patch = { ...(fields.title ? { title: fields.title } : {}), ...(fields.company ? { company: fields.company } : {}), ...(fields.location ? { location: fields.location } : {}), ...(fields.workplace_type ? { workplace_type: fields.workplace_type } : {}), ...(fields.employment_type ? { employment_type: fields.employment_type } : {}) };
-          if (Object.keys(patch).length) db.update(job.id, patch); job = db.get(jobId)!;
+          if (Object.keys(patch).length) db.update(job.id, patch, { touchActivity: false }); job = db.get(jobId)!;
         }
       }
     });
@@ -191,7 +191,7 @@ export function buildApp(config: AppConfig) {
     return { success: true, job_id: result.jobId, action: result.action, parser: parser.source, warnings: parsed.warnings };
   });
   app.get('/api/jobs', async request => {
-    const listed = db.list(request.query as { search?: string; status?: string; source?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; order?: string; archive?: string }); const ids = listed.map(job => job.id);
+    const listed = db.list(request.query as { search?: string; status?: string; source?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; order?: string; archive?: string; inactive?: string }); const ids = listed.map(job => job.id);
     const tags = db.tagsForJobs(ids); const nextInterviews = db.nextAppointmentsForJobs(ids); const analyses = db.latestAnalysesForJobs(ids); const profile = await profiles.load().catch(() => undefined);
     return listed.map(job => ({ ...job, next_interview: nextInterviews.get(job.id) ?? null, tags: tags.get(job.id) ?? [], ai_match: analysisView(analyses.get(job.id), profile, job.description_text) }));
   });
