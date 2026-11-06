@@ -21,6 +21,10 @@ export type ImapSettingsRow = { host: string; port: number; tls_mode: 'tls' | 's
 export type EmailRecordRow = { id: string; uid_validity: string; imap_uid: number; received_at: string; body_text: string; body_hash: string; category: string | null; classification_json: string | null; proposed_job_id: string | null; match_status: 'exact' | 'probable' | 'no_match' | null; review_status: 'pending_review' | 'applied' | 'ignored' | 'reverted'; unresolved_reason: string | null; initial_import: number; created_at: string; updated_at: string; job_title?: string | null; job_company?: string | null };
 export type EmailLogRow = Omit<EmailRecordRow, 'body_text' | 'body_hash' | 'classification_json'>;
 export type BackupSettingsRow = { webhook_url: string; encrypted_webhook_secret: string; automatic_enabled: number; interval_hours: number; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; updated_at: string };
+export type DisplaySettingsRow = { inactive_after_days: number; updated_at: string };
+export type ParserSourceMode = 'preset' | 'ai_manual' | 'ai_auto';
+export type ParserSourceSettingsRow = { source: string; mode: ParserSourceMode; updated_at: string };
+export const ParserSourcePresets = ['linkedin', 'greenhouse', 'smartrecruiters', 'successfactors', 'workday', 'generic'] as const;
 
 export class JobDatabase {
   readonly db: Database.Database;
@@ -143,7 +147,14 @@ export class JobDatabase {
       CREATE TABLE IF NOT EXISTS backup_settings (
         id INTEGER PRIMARY KEY CHECK (id = 1), webhook_url TEXT NOT NULL DEFAULT '', encrypted_webhook_secret TEXT NOT NULL DEFAULT '', automatic_enabled INTEGER NOT NULL DEFAULT 0,
         interval_hours INTEGER NOT NULL DEFAULT 24, last_sync_at TEXT, last_sync_status TEXT, last_error TEXT, updated_at TEXT NOT NULL DEFAULT '');
-      INSERT OR IGNORE INTO backup_settings (id, updated_at) VALUES (1, '');`);
+      INSERT OR IGNORE INTO backup_settings (id, updated_at) VALUES (1, '');
+      CREATE TABLE IF NOT EXISTS display_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1), inactive_after_days INTEGER NOT NULL DEFAULT 15, updated_at TEXT NOT NULL DEFAULT '');
+      INSERT OR IGNORE INTO display_settings (id, inactive_after_days, updated_at) VALUES (1, 15, '');
+      CREATE TABLE IF NOT EXISTS parser_source_settings (
+        source TEXT PRIMARY KEY, mode TEXT NOT NULL DEFAULT 'preset', updated_at TEXT NOT NULL DEFAULT '');`);
+    const insertParserSourceSetting = this.db.prepare("INSERT OR IGNORE INTO parser_source_settings (source, mode, updated_at) VALUES (?, 'preset', '')");
+    for (const source of ParserSourcePresets) insertParserSourceSetting.run(source);
     const imapColumns = this.db.prepare('PRAGMA table_info(imap_settings)').all() as Array<{ name: string }>;
     const needsMailboxUpgrade = !imapColumns.some(column => column.name === 'interview_mailbox');
     if (needsMailboxUpgrade) this.db.exec("ALTER TABLE imap_settings ADD COLUMN interview_mailbox TEXT NOT NULL DEFAULT ''");
@@ -211,8 +222,9 @@ export class JobDatabase {
       // Inactive is a derived display state, never an archival state.  The
       // email matcher requests `archive=all` so it keeps seeing these jobs.
       where.push("status != 'archived'");
-      if (filters.inactive === 'only') where.push("julianday(last_activity_at) < julianday('now', '-15 days')");
-      else if (filters.archive !== 'all') where.push("julianday(last_activity_at) >= julianday('now', '-15 days')");
+      const inactiveModifier = `-${this.displaySettings().inactive_after_days} days`;
+      if (filters.inactive === 'only') { where.push("julianday(last_activity_at) < julianday('now', ?)"); values.push(inactiveModifier); }
+      else if (filters.archive !== 'all') { where.push("julianday(last_activity_at) >= julianday('now', ?)"); values.push(inactiveModifier); }
     }
     const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: 'jobs.updated_at DESC', company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: 'jobs.title COLLATE NOCASE ASC', waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
     return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id), jobs.created_at) AS last_event_at,
@@ -550,6 +562,11 @@ export class JobDatabase {
     const now = new Date().toISOString(); const transaction = this.db.transaction(() => { this.db.prepare('UPDATE jobs SET status=?, result_outcome=?, archive_reason=NULL, archive_seen_at=NULL, updated_at=? WHERE id=?').run(effect.previous_status, effect.previous_result_outcome, now, job.id); this.db.prepare('UPDATE email_effects SET reverted_at=? WHERE email_id=? AND reverted_at IS NULL').run(now, id); this.db.prepare("UPDATE email_records SET review_status='reverted', updated_at=? WHERE id=?").run(now, id); this.insertEvent(job.id, 'email_status_changed', now, 'Email update reverted'); }); transaction(); return this.email(id);
   }
   backupSettings() { return this.db.prepare('SELECT * FROM backup_settings WHERE id=1').get() as BackupSettingsRow; }
+  displaySettings() { return this.db.prepare('SELECT inactive_after_days, updated_at FROM display_settings WHERE id=1').get() as DisplaySettingsRow; }
+  saveDisplaySettings(input: Pick<DisplaySettingsRow, 'inactive_after_days'>) { this.db.prepare('UPDATE display_settings SET inactive_after_days=?, updated_at=? WHERE id=1').run(input.inactive_after_days, new Date().toISOString()); return this.displaySettings(); }
+  parserSourceSettings() { return this.db.prepare('SELECT source, mode, updated_at FROM parser_source_settings ORDER BY source').all() as ParserSourceSettingsRow[]; }
+  parserSourceSetting(source: string) { return this.db.prepare('SELECT source, mode, updated_at FROM parser_source_settings WHERE source=?').get(source) as ParserSourceSettingsRow | undefined; }
+  updateParserSourceSetting(source: string, mode: ParserSourceMode) { if (!(ParserSourcePresets as readonly string[]).includes(source)) return undefined; this.db.prepare('UPDATE parser_source_settings SET mode=?, updated_at=? WHERE source=?').run(mode, new Date().toISOString(), source); return this.parserSourceSetting(source); }
   saveBackupSettings(input: Partial<Pick<BackupSettingsRow, 'webhook_url' | 'encrypted_webhook_secret' | 'automatic_enabled' | 'interval_hours'>>) { const old = this.backupSettings(); const now = new Date().toISOString(); this.db.prepare('UPDATE backup_settings SET webhook_url=?, encrypted_webhook_secret=?, automatic_enabled=?, interval_hours=?, updated_at=? WHERE id=1').run(input.webhook_url ?? old.webhook_url, input.encrypted_webhook_secret ?? old.encrypted_webhook_secret, input.automatic_enabled ?? old.automatic_enabled, input.interval_hours ?? old.interval_hours, now); return this.backupSettings(); }
   updateBackupSyncStatus(input: { status: string; error?: string | null }) { const now = new Date().toISOString(); this.db.prepare('UPDATE backup_settings SET last_sync_at=?, last_sync_status=?, last_error=? WHERE id=1').run(now, input.status, input.error?.slice(0, 500) ?? null); return this.backupSettings(); }
   portableBackup() {
