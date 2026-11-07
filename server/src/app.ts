@@ -199,6 +199,10 @@ export function buildApp(config: AppConfig) {
     const tags = db.tagsForJobs(ids); const nextInterviews = db.nextAppointmentsForJobs(ids); const analyses = db.latestAnalysesForJobs(ids); const profile = await profiles.load().catch(() => undefined);
     return listed.map(job => ({ ...job, next_interview: nextInterviews.get(job.id) ?? null, tags: tags.get(job.id) ?? [], ai_match: analysisView(analyses.get(job.id), profile, job.description_text) }));
   });
+  app.get('/api/search', async request => {
+    const { q } = request.query as { q?: string };
+    return db.search((q ?? '').slice(0, 160));
+  });
   app.get('/api/jobs/options', async () => db.jobOptions());
   app.get('/api/jobs/countries', async () => db.countryFilters());
   app.get('/api/jobs/languages', async () => db.languageFilters());

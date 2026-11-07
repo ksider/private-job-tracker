@@ -32,6 +32,7 @@ type GroupBy = '' | 'tag' | 'company' | 'country' | 'region' | 'language' | 'sou
 type SortBy = 'newest' | 'oldest' | 'updated' | 'company' | 'location' | 'title' | 'waiting';
 type Job = { id: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; posting_language_code: string | null; geo_source: 'ai' | 'manual' | null; source: string; source_url: string; status: Status; interview_stage: InterviewStage | null; application_id: string | null; result_outcome: string | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; notes: string; cover_letter_text: string | null; cover_letter_model: string | null; cover_letter_updated_at: string | null; employment_type: string | null; workplace_type: string | null; description_html: string | null; created_at: string; captured_at: string; parse_status: string; last_event_at: string; stage_started_at: string; tags: Tag[]; events?: JobEvent[]; appointments?: InterviewAppointment[]; next_interview?: InterviewAppointment | null; ai_match?: AiMatch | null };
 type JobOption = Pick<Job, 'id' | 'company' | 'title'>;
+type GlobalSearchResult = Pick<Job, 'id' | 'title' | 'company' | 'location' | 'status'> & { is_inactive: number };
 type CountryFilterOption = { name: string | null; code: string | null };
 const stages: Array<{ status: Exclude<Status, 'archived'>; label: string; next?: Status; nextLabel?: string }> = [{ status: 'saved', label: 'Сохранено', next: 'sent', nextLabel: 'Отправил' }, { status: 'sent', label: 'Отправлено', next: 'interview', nextLabel: 'Интервью' }, { status: 'interview', label: 'Интервью', next: 'result', nextLabel: 'В результат' }, { status: 'result', label: 'Результат' }];
 const statusLabels: Record<Status, string> = { saved: 'Сохранено', sent: 'Отправлено', interview: 'Интервью', result: 'Результат', archived: 'Архив' };
@@ -49,7 +50,7 @@ const stageColors: Record<Exclude<Status, 'archived'>, { column: string; heading
   result: { column: 'border-emerald-200 bg-emerald-50', heading: 'text-emerald-800', count: 'bg-emerald-200 text-emerald-800', empty: 'border-emerald-200 text-emerald-700' }
 };
 type BoardStage = Exclude<Status, 'archived'>;
-type ViewState = { mode: 'table' | 'board'; search: string; status: string; source: string; tag: string; matches: AiMatchFilter[]; countries: string[]; languages: string[]; sort: SortBy; group: GroupBy; archive: boolean; inactive: boolean; compactCards: boolean; collapsedStages: BoardStage[] };
+type ViewState = { mode: 'table' | 'board'; status: string; source: string; tag: string; matches: AiMatchFilter[]; countries: string[]; languages: string[]; sort: SortBy; group: GroupBy; archive: boolean; inactive: boolean; compactCards: boolean; collapsedStages: BoardStage[] };
 const viewStorageKey = 'job-tracker.view-state-v2';
 const validSorts = new Set<SortBy>(['newest', 'oldest', 'updated', 'company', 'location', 'title', 'waiting']);
 const validGroups = new Set<GroupBy>(['', 'tag', 'company', 'country', 'region', 'language', 'source', 'ai_match', 'month']);
@@ -61,7 +62,7 @@ const languageValues = (value: unknown) => [...new Set((Array.isArray(value) ? v
 const matchValues = (value: unknown): AiMatchFilter[] => [...new Set((Array.isArray(value) ? value : typeof value === 'string' ? [value] : []).filter((match): match is AiMatchFilter => typeof match === 'string' && aiMatchChoices.some(([value]) => value === match)))];
 const viewState: ViewState = {
   mode: urlView.get('view') === 'table' || (!urlView.get('view') && storedView.mode === 'table') ? 'table' : 'board',
-  search: urlView.get('q') ?? storedView.search ?? '', status: urlView.get('status') ?? storedView.status ?? '', source: urlView.get('source') ?? storedView.source ?? '', tag: urlView.get('tag') ?? storedView.tag ?? '', matches: matchValues(urlView.getAll('match').length ? urlView.getAll('match') : storedView.matches ?? storedView.match), countries: countryValues(urlView.getAll('country').length ? urlView.getAll('country') : storedView.countries ?? storedView.country), languages: languageValues(urlView.getAll('language').length ? urlView.getAll('language') : storedView.languages),
+  status: urlView.get('status') ?? storedView.status ?? '', source: urlView.get('source') ?? storedView.source ?? '', tag: urlView.get('tag') ?? storedView.tag ?? '', matches: matchValues(urlView.getAll('match').length ? urlView.getAll('match') : storedView.matches ?? storedView.match), countries: countryValues(urlView.getAll('country').length ? urlView.getAll('country') : storedView.countries ?? storedView.country), languages: languageValues(urlView.getAll('language').length ? urlView.getAll('language') : storedView.languages),
   sort: validSorts.has(urlView.get('sort') as SortBy) ? urlView.get('sort') as SortBy : validSorts.has(storedView.sort as SortBy) ? storedView.sort as SortBy : 'newest',
   group: validGroups.has(urlView.get('group') as GroupBy) ? urlView.get('group') as GroupBy : validGroups.has(storedView.group as GroupBy) ? storedView.group as GroupBy : '',
   archive: urlView.get('archive') === '1' || (!urlView.has('archive') && Boolean(storedView.archive)),
@@ -111,8 +112,8 @@ const requestIdSuffix = () => {
 };
 const nextClientRequestId = () => `${Date.now().toString(36)}-${(++apiRequestCounter).toString(36)}-${requestIdSuffix()}`;
 async function api(url: string, init?: RequestInit) { const headers = new Headers(init?.headers); const requestId = nextClientRequestId(); const method = (init?.method ?? 'GET').toUpperCase(); const startedAt = performance.now(); headers.set('x-client-request-id', requestId); if (init?.body !== undefined && !headers.has('content-type')) headers.set('content-type', 'application/json'); let response: Response; try { response = await fetch(url, { ...init, headers }); } catch (error) { if (init?.signal?.aborted || error instanceof Error && error.name === 'AbortError') throw error; const durationMs = Math.round(performance.now() - startedAt); console.warn('[Job Tracker API network failure]', { requestId, method, url, durationMs, online: navigator.onLine, error: error instanceof Error ? { name: error.name, message: error.message } : String(error) }); const networkError = new Error(`Сетевой сбой при обращении к серверу · запрос ${requestId}.`); networkError.name = 'ApiNetworkError'; throw networkError; } if (!response.ok && response.status !== 204) { const payload = await response.json().catch(() => ({ error: response.statusText })) as { error?: string; details?: { fieldErrors?: Record<string, string[]>; formErrors?: string[] } }; const details = [...Object.values(payload.details?.fieldErrors ?? {}).flat(), ...(payload.details?.formErrors ?? [])]; throw new Error(details.length ? `${payload.error ?? response.statusText}: ${details.join(', ')}` : payload.error ?? response.statusText); } return response.status === 204 ? undefined : response.json(); }
-function syncViewState() { viewState.mode = mode; viewState.archive = archiveMode; viewState.inactive = inactiveMode; localStorage.setItem(viewStorageKey, JSON.stringify(viewState)); const params = new URLSearchParams(); if (viewState.mode !== 'board') params.set('view', viewState.mode); if (viewState.search) params.set('q', viewState.search); if (viewState.status) params.set('status', viewState.status); if (viewState.source) params.set('source', viewState.source); if (viewState.tag) params.set('tag', viewState.tag); viewState.matches.forEach(match => params.append('match', match)); viewState.countries.forEach(country => params.append('country', country)); viewState.languages.forEach(language => params.append('language', language)); if (viewState.sort !== 'newest') params.set('sort', viewState.sort); if (viewState.group) params.set('group', viewState.group); if (viewState.archive) params.set('archive', '1'); if (viewState.inactive) params.set('inactive', '1'); if (viewState.compactCards) params.set('cards', 'compact'); if (viewState.collapsedStages.length) params.set('collapsed', viewState.collapsedStages.join(',')); history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}`); }
-function query() { const params = new URLSearchParams(); if (viewState.search) params.set('search', viewState.search); if (viewState.status) params.set('status', viewState.status); if (viewState.source) params.set('source', viewState.source); if (viewState.tag) params.set('tag', viewState.tag); viewState.matches.forEach(match => params.append('match', match)); viewState.countries.forEach(country => params.append('country', country)); viewState.languages.forEach(language => params.append('language', language)); params.set('order', viewState.sort); if (archiveMode) params.set('archive', 'only'); else if (inactiveMode) params.set('inactive', 'only'); return params; }
+function syncViewState() { viewState.mode = mode; viewState.archive = archiveMode; viewState.inactive = inactiveMode; localStorage.setItem(viewStorageKey, JSON.stringify(viewState)); const params = new URLSearchParams(); if (viewState.mode !== 'board') params.set('view', viewState.mode); if (viewState.status) params.set('status', viewState.status); if (viewState.source) params.set('source', viewState.source); if (viewState.tag) params.set('tag', viewState.tag); viewState.matches.forEach(match => params.append('match', match)); viewState.countries.forEach(country => params.append('country', country)); viewState.languages.forEach(language => params.append('language', language)); if (viewState.sort !== 'newest') params.set('sort', viewState.sort); if (viewState.group) params.set('group', viewState.group); if (viewState.archive) params.set('archive', '1'); if (viewState.inactive) params.set('inactive', '1'); if (viewState.compactCards) params.set('cards', 'compact'); if (viewState.collapsedStages.length) params.set('collapsed', viewState.collapsedStages.join(',')); history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}`); }
+function query() { const params = new URLSearchParams(); if (viewState.status) params.set('status', viewState.status); if (viewState.source) params.set('source', viewState.source); if (viewState.tag) params.set('tag', viewState.tag); viewState.matches.forEach(match => params.append('match', match)); viewState.countries.forEach(country => params.append('country', country)); viewState.languages.forEach(language => params.append('language', language)); params.set('order', viewState.sort); if (archiveMode) params.set('archive', 'only'); else if (inactiveMode) params.set('inactive', 'only'); return params; }
 let jobsLoadController: AbortController | undefined;
 let jobsLoadGeneration = 0;
 let keepFilterMenuOpen = false;
@@ -545,7 +546,6 @@ async function generateCoverLetter(consent = false): Promise<void> {
 function closeViewMenus(except?: HTMLDetailsElement) { document.querySelectorAll<HTMLDetailsElement>('#view-controls details[open]').forEach(menu => { if (menu !== except) menu.open = false; }); }
 function renderBoardDensityToggle() { const button = document.querySelector('#card-density-toggle') as HTMLButtonElement | null; if (!button) return; const visible = mode === 'board' && !archiveMode; button.classList.toggle('hidden', !visible); button.className = `${visible ? '' : 'hidden '}rounded-lg border p-2 text-gray-700 hover:bg-gray-50 ${viewState.compactCards ? 'border-blue-700 bg-blue-700 text-white hover:bg-blue-800' : 'border-gray-300 bg-white'}`; button.title = viewState.compactCards ? 'Обычные карточки' : 'Компактные карточки'; button.setAttribute('aria-label', button.title); button.setAttribute('aria-pressed', String(viewState.compactCards)); }
 function setupViewControls() {
-  ($('#search') as HTMLInputElement).value = viewState.search;
   ['#status-filter', '#source-filter', '#sort'].forEach(id => $(id).classList.add('hidden'));
   if ($('#view-controls')) return;
   const controls = document.createElement('div'); controls.id = 'view-controls'; controls.className = 'flex shrink-0 items-center gap-1';
@@ -620,7 +620,7 @@ function renderViewControls() {
   tagSearch.onblur = () => window.setTimeout(() => { if (!tagPicker.contains(document.activeElement)) closeTagPicker(); }, 0);
   tagSearch.onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); closeViewMenus(); } };
   $('#clear-compact-tag').onclick = () => { viewState.tag = ''; tagSearch.value = ''; tagOptions.classList.add('hidden'); refreshFilteredJobs(); };
-  $('#clear-filters').onclick = () => { viewState.search = ''; viewState.status = ''; viewState.source = ''; viewState.tag = ''; viewState.matches = []; viewState.countries = []; viewState.languages = []; ($('#search') as HTMLInputElement).value = ''; refreshFilteredJobs(); };
+  $('#clear-filters').onclick = () => { viewState.status = ''; viewState.source = ''; viewState.tag = ''; viewState.matches = []; viewState.countries = []; viewState.languages = []; refreshFilteredJobs(); };
   const sortOptions: Array<[SortBy, string, string, 'По времени' | 'По данным вакансии']> = [
     ['newest', 'Сначала новые', 'Дата добавления: от новых к старым', 'По времени'],
     ['oldest', 'Сначала старые', 'Дата добавления: от старых к новым', 'По времени'],
@@ -1234,15 +1234,69 @@ document.addEventListener('DOMContentLoaded', () => {
   else if (jobRouteId()) void openJob(jobRouteId()!, false).catch(error => show(error.message, true));
   else { void loadDisplaySettings().catch(error => show(error.message, true)); void loadJobs().catch(error => show(error.message, true)); }
   window.addEventListener('popstate', () => { const id = jobRouteId(); if (id) void openJob(id, false).catch(error => show(error.message, true)); else if (location.pathname === '/settings') void api('/api/tags').then(tags => { allTags = tags as Tag[]; renderSettingsTabs(); }).catch(error => show(error.message, true)); else if (location.pathname === '/stats') renderStatsPage(); else if (location.pathname === '/') void showJobsList().catch(error => show(error.message, true)); });
-  let timeout: number | undefined;
   const searchInput = $('#search') as HTMLInputElement;
   const clearSearch = $('#clear-search') as HTMLButtonElement;
+  const searchResults = $('#global-search-results');
+  let searchTimeout: number | undefined;
+  let searchController: AbortController | undefined;
+  let activeSearchResult = -1;
   searchInput.classList.replace('pr-9', 'pr-16');
   clearSearch.classList.replace('right-0', 'right-12');
   const syncSearchClear = () => clearSearch.classList.toggle('hidden', !searchInput.value);
+  const closeGlobalSearch = () => { searchResults.classList.add('hidden'); searchInput.setAttribute('aria-expanded', 'false'); searchInput.removeAttribute('aria-activedescendant'); activeSearchResult = -1; };
+  const visibleSearchResults = () => Array.from(searchResults.querySelectorAll<HTMLButtonElement>('[data-global-search-result]'));
+  const setActiveSearchResult = (index: number) => {
+    const results = visibleSearchResults();
+    if (!results.length) return;
+    activeSearchResult = (index + results.length) % results.length;
+    results.forEach((result, resultIndex) => {
+      const active = resultIndex === activeSearchResult;
+      result.classList.toggle('bg-blue-50', active);
+      result.setAttribute('aria-selected', String(active));
+    });
+    searchInput.setAttribute('aria-activedescendant', results[activeSearchResult].id);
+    results[activeSearchResult].scrollIntoView({ block: 'nearest' });
+  };
+  const globalSearchStatus = (result: GlobalSearchResult) => result.status === 'archived' ? 'Архив' : result.is_inactive ? `${statusLabels[result.status]} · неактивна` : statusLabels[result.status];
+  const globalSearchStatusClass = (result: GlobalSearchResult) => result.status === 'archived' ? 'bg-amber-100 text-amber-800' : result.is_inactive ? 'bg-slate-200 text-slate-700' : ({ saved: 'bg-slate-100 text-slate-700', sent: 'bg-blue-100 text-blue-800', interview: 'bg-violet-100 text-violet-800', result: 'bg-emerald-100 text-emerald-800', archived: 'bg-amber-100 text-amber-800' } satisfies Record<Status, string>)[result.status];
+  const openGlobalSearchResult = (id: string) => { closeGlobalSearch(); void openJob(id).catch(error => show(error.message, true)); };
+  const renderGlobalSearchResults = (value: string, results: GlobalSearchResult[]) => {
+    if (searchInput.value.trim() !== value) return;
+    if (!results.length) searchResults.innerHTML = `<p class="px-3 py-4 text-sm text-gray-500">Ничего не найдено по компании или должности.</p>`;
+    else searchResults.innerHTML = `<p class="border-b border-gray-100 px-3 py-2 text-xs font-medium text-gray-500">Все карточки · ${results.length} ${results.length === 1 ? 'результат' : 'результатов'}</p>${results.map((result, index) => `<button id="global-search-result-${index}" type="button" role="option" aria-selected="false" data-global-search-result="${escape(result.id)}" class="flex w-full items-start gap-3 px-3 py-3 text-left transition hover:bg-gray-50"><span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium text-gray-900">${escape(result.title ?? 'Без названия')}</span><span class="mt-0.5 block truncate text-sm text-gray-600">${escape(result.company ?? 'Компания не указана')}${result.location ? ` · ${escape(result.location)}` : ''}</span></span><span class="shrink-0 rounded-full px-2 py-1 text-xs font-medium ${globalSearchStatusClass(result)}">${globalSearchStatus(result)}</span></button>`).join('')}`;
+    searchResults.classList.remove('hidden');
+    searchInput.setAttribute('aria-expanded', 'true');
+    activeSearchResult = -1;
+    visibleSearchResults().forEach(button => button.onclick = () => openGlobalSearchResult(button.dataset.globalSearchResult!));
+  };
+  const requestGlobalSearch = () => {
+    const value = searchInput.value.trim();
+    window.clearTimeout(searchTimeout);
+    searchController?.abort();
+    if (value.length < 2) { closeGlobalSearch(); return; }
+    searchTimeout = window.setTimeout(() => {
+      const controller = new AbortController();
+      searchController = controller;
+      void (api(`/api/search?q=${encodeURIComponent(value)}`, { signal: controller.signal }) as Promise<GlobalSearchResult[]>).then(results => {
+        if (!controller.signal.aborted) renderGlobalSearchResults(value, results);
+      }).catch(error => {
+        if (!controller.signal.aborted) show(error instanceof Error ? error.message : 'Не удалось выполнить поиск.', true);
+      });
+    }, 160);
+  };
   syncSearchClear();
-  searchInput.addEventListener('input', () => { syncSearchClear(); window.clearTimeout(timeout); timeout = window.setTimeout(() => { viewState.search = searchInput.value.trim(); void loadJobs().catch(error => show(error.message, true)); }, 180); });
-  clearSearch.onclick = () => { window.clearTimeout(timeout); searchInput.value = ''; syncSearchClear(); viewState.search = ''; searchInput.focus(); void loadJobs().catch(error => show(error.message, true)); };
+  searchInput.addEventListener('input', () => { syncSearchClear(); requestGlobalSearch(); });
+  searchInput.addEventListener('focus', requestGlobalSearch);
+  searchInput.addEventListener('keydown', event => {
+    const results = visibleSearchResults();
+    if (event.key === 'Escape') { closeGlobalSearch(); return; }
+    if (!results.length) return;
+    if (event.key === 'ArrowDown') { event.preventDefault(); setActiveSearchResult(activeSearchResult + 1); }
+    if (event.key === 'ArrowUp') { event.preventDefault(); setActiveSearchResult(activeSearchResult - 1); }
+    if (event.key === 'Enter') { const result = results[activeSearchResult < 0 ? 0 : activeSearchResult]; if (result) { event.preventDefault(); openGlobalSearchResult(result.dataset.globalSearchResult!); } }
+  });
+  clearSearch.onclick = () => { window.clearTimeout(searchTimeout); searchController?.abort(); searchInput.value = ''; syncSearchClear(); closeGlobalSearch(); searchInput.focus(); };
+  document.addEventListener('pointerdown', event => { if (!searchInput.parentElement?.contains(event.target as Node)) closeGlobalSearch(); });
   $('#table-mode').onclick = () => { mode = 'table'; if (archiveMode) { archiveMode = false; void loadJobs().catch(error => show(error.message, true)); } else { syncViewState(); render(); } };
   $('#board-mode').onclick = () => { mode = 'board'; if (archiveMode) { archiveMode = false; void loadJobs().catch(error => show(error.message, true)); } else { syncViewState(); render(); } };
   $('#inactive-toggle').onclick = () => { inactiveMode = !inactiveMode; archiveMode = false; viewState.status = ''; void loadJobs().catch(error => show(error.message, true)); };

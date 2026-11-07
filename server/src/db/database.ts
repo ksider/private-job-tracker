@@ -237,6 +237,22 @@ export class JobDatabase {
       END AS stage_started_at
       FROM jobs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`).all(...values) as JobRow[];
   }
+  search(query: string, limit = 12) {
+    const term = query.trim();
+    if (term.length < 2) return [] as Array<Pick<JobRow, 'id' | 'title' | 'company' | 'location' | 'status'> & { is_inactive: number }>;
+    const inactiveModifier = `-${this.displaySettings().inactive_after_days} days`;
+    const cappedLimit = Math.max(1, Math.min(limit, 25));
+    return this.db.prepare(`SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.status,
+      CASE WHEN jobs.status != 'archived' AND julianday(jobs.last_activity_at) < julianday('now', ?) THEN 1 ELSE 0 END AS is_inactive
+      FROM jobs
+      WHERE instr(LOWER(COALESCE(jobs.title, '')), LOWER(?)) > 0
+        OR instr(LOWER(COALESCE(jobs.company, '')), LOWER(?)) > 0
+      ORDER BY
+        CASE WHEN instr(LOWER(COALESCE(jobs.title, '')), LOWER(?)) > 0 THEN 0 ELSE 1 END,
+        CASE WHEN jobs.status = 'archived' THEN 2 WHEN julianday(jobs.last_activity_at) < julianday('now', ?) THEN 1 ELSE 0 END,
+        jobs.last_activity_at DESC
+      LIMIT ?`).all(inactiveModifier, term, term, term, inactiveModifier, cappedLimit) as Array<Pick<JobRow, 'id' | 'title' | 'company' | 'location' | 'status'> & { is_inactive: number }>;
+  }
   jobOptions() { return this.db.prepare("SELECT id, company, title FROM jobs WHERE status != 'archived' ORDER BY captured_at DESC").all() as Array<Pick<JobRow, 'id' | 'company' | 'title'>>; }
   countryFilters() { return this.db.prepare("SELECT geo_country AS name, geo_country_code AS code FROM jobs WHERE status != 'archived' GROUP BY geo_country, geo_country_code ORDER BY COALESCE(geo_country, '') COLLATE NOCASE ASC").all() as Array<{ name: string | null; code: string | null }>; }
   languageFilters() { return this.db.prepare("SELECT posting_language_code AS code FROM jobs WHERE status != 'archived' GROUP BY posting_language_code ORDER BY COALESCE(posting_language_code, '') COLLATE NOCASE ASC").all() as Array<{ code: string | null }>; }
