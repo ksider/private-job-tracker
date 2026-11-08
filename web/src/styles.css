@@ -11,6 +11,21 @@
 #match-dialog { width: min(980px, calc(100% - 2rem)); }
 #cover-letter-dialog { width: min(760px, calc(100% - 2rem)); }
 
+@keyframes cover-letter-copy-confirmation {
+  0% { transform: scale(0.94); }
+  60% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+.cover-letter-copy-success {
+  animation: cover-letter-copy-confirmation 260ms ease-out;
+  border-color: rgb(110 231 183) !important;
+  background: rgb(236 253 245) !important;
+  color: rgb(6 95 70) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cover-letter-copy-success { animation: none; }
+}
+
 /* A color picker is part of a tag, not a separate form control. */
 .tag-color-input { appearance: none; -webkit-appearance: none; border-radius: 9999px; overflow: hidden; }
 .tag-color-input::-webkit-color-swatch-wrapper { padding: 0; }

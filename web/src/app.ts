@@ -496,6 +496,7 @@ function renderInterviewAppointments(job: Job) {
 function renderNotes(notes: string) { const target = $('#notes-display'); const entries = notes.trim().split(/\n{2,}/).filter(Boolean); target.innerHTML = entries.length ? entries.map(note => `<p class="rounded-lg bg-gray-50 p-3 text-sm text-gray-700">${escape(note).replace(/\n/g, '<br>')}</p>`).join('') : '<p class="text-sm text-gray-500">Заметок пока нет.</p>'; }
 let coverLetterSubject: Job | null = null;
 let coverLetterConnectionId = '';
+let coverLetterCopyResetTimeout: number | undefined;
 const coverLetterDialog = () => $('#cover-letter-dialog') as HTMLDialogElement;
 function renderCoverLetter(job: Job) {
   const panel = $('#cover-letter-panel'); const action = $('#cover-letter-generate') as HTMLButtonElement;
@@ -526,6 +527,46 @@ async function openCoverLetterDialog() {
   if (!coverLetterDialog().open) coverLetterDialog().showModal();
 }
 function coverLetterFileName(job: Job) { return `cover-letter-${(job.company || job.title || 'job').replace(/[^a-z0-9]+/gi, '-').replace(/(^-|-$)/g, '').toLowerCase() || 'job'}.txt`; }
+async function copyText(text: string) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); return; } catch { /* Fall back for denied clipboard permissions. */ }
+  }
+  const fallback = document.createElement('textarea');
+  fallback.value = text;
+  fallback.setAttribute('readonly', '');
+  fallback.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+  document.body.append(fallback);
+  fallback.select();
+  fallback.setSelectionRange(0, fallback.value.length);
+  const copied = document.execCommand('copy');
+  fallback.remove();
+  if (!copied) throw new Error('Clipboard write failed');
+}
+async function copyCoverLetter() {
+  const button = $('#cover-letter-copy') as HTMLButtonElement;
+  const text = ($('#cover-letter-text') as HTMLTextAreaElement).value;
+  if (!text.trim()) return;
+  window.clearTimeout(coverLetterCopyResetTimeout);
+  button.disabled = true;
+  button.classList.remove('cover-letter-copy-success');
+  button.textContent = 'Копируем…';
+  try {
+    await copyText(text);
+    button.textContent = '✓ Скопировано';
+    button.classList.add('cover-letter-copy-success');
+    show('Письмо скопировано.');
+    coverLetterCopyResetTimeout = window.setTimeout(() => {
+      if (!button.isConnected) return;
+      button.disabled = false;
+      button.classList.remove('cover-letter-copy-success');
+      button.textContent = 'Копировать';
+    }, 1600);
+  } catch {
+    button.disabled = false;
+    button.textContent = 'Копировать';
+    show('Не удалось скопировать текст.', true);
+  }
+}
 async function saveCoverLetterText() {
   const job = coverLetterSubject ?? current; if (!job) return;
   const button = $('#cover-letter-save') as HTMLButtonElement; const text = ($('#cover-letter-text') as HTMLTextAreaElement).value.trim(); button.disabled = true;
@@ -1089,7 +1130,7 @@ function setupCoverLetterDialog() {
   document.body.append(dialog);
   ($('#cover-letter-close') as HTMLButtonElement).onclick = () => dialog.close();
   ($('#cover-letter-connection') as HTMLSelectElement).onchange = event => { coverLetterConnectionId = (event.target as HTMLSelectElement).value; };
-  ($('#cover-letter-copy') as HTMLButtonElement).onclick = () => void navigator.clipboard.writeText(($('#cover-letter-text') as HTMLTextAreaElement).value).then(() => show('Письмо скопировано.')).catch(() => show('Не удалось скопировать текст.', true));
+  ($('#cover-letter-copy') as HTMLButtonElement).onclick = () => void copyCoverLetter();
   ($('#cover-letter-download') as HTMLButtonElement).onclick = () => { const job = coverLetterSubject ?? current; if (!job) return; const blob = new Blob([($('#cover-letter-text') as HTMLTextAreaElement).value], { type: 'text/plain;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = coverLetterFileName(job); link.click(); URL.revokeObjectURL(link.href); };
   ($('#cover-letter-save') as HTMLButtonElement).onclick = () => void saveCoverLetterText();
   ($('#cover-letter-create') as HTMLButtonElement).onclick = () => void generateCoverLetter();
