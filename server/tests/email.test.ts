@@ -25,8 +25,9 @@ describe('email sync foundations', () => {
     const db = new JobDatabase(':memory:'); const now = '2026-10-22T12:00:00.000Z';
     const imported = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/1', title: 'Process Engineer', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: now });
     const email = db.saveEmail({ uid_validity: '7', imap_uid: 42, received_at: now, body_text: 'Unfortunately, we will not continue.', body_hash: 'hash', category: 'rejection', classification_json: '{}', proposed_job_id: imported.jobId, match_status: 'exact', review_status: 'pending_review', unresolved_reason: null, initial_import: 0 });
-    db.confirmEmail(email.id); expect(db.get(imported.jobId)).toMatchObject({ status: 'archived', archive_reason: 'email_review', result_outcome: 'rejected' });
-    db.revertEmailEffect(email.id); expect(db.get(imported.jobId)).toMatchObject({ status: 'saved', result_outcome: null });
+    db.confirmEmail(email.id); expect(db.get(imported.jobId)).toMatchObject({ status: 'archived', archive_reason: 'email_review', result_outcome: 'rejected' }); expect(db.email(email.id)).toMatchObject({ reversible_effect: 1 });
+    db.revertEmailEffect(email.id); expect(db.get(imported.jobId)).toMatchObject({ status: 'saved', result_outcome: null }); expect(db.email(email.id)).toMatchObject({ review_status: 'pending_review', unresolved_reason: 'reverted_action', reversible_effect: 0 });
+    db.confirmEmail(email.id); expect(db.get(imported.jobId)).toMatchObject({ status: 'archived', result_outcome: 'rejected' }); expect(db.email(email.id)).toMatchObject({ reversible_effect: 1 });
   });
   it('archives a probable email rejection in the review column', () => {
     const db = new JobDatabase(':memory:'); const now = '2026-10-22T12:00:00.000Z';
