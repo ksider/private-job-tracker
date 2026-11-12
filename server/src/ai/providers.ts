@@ -1,6 +1,7 @@
 import type { ProviderType } from './schemas.js';
 
-export type ProviderConnection = { provider_type: ProviderType; base_url: string | null; api_key: string; model: string; temperature?: number; max_output_tokens: number; timeout_ms: number; rate_limit_key?: string; requests_per_minute?: number; tokens_per_minute?: number };
+export type UsageMetrics = { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+export type ProviderConnection = { provider_type: ProviderType; base_url: string | null; api_key: string; model: string; temperature?: number; max_output_tokens: number; timeout_ms: number; rate_limit_key?: string; requests_per_minute?: number; tokens_per_minute?: number; onUsage?: (usage: UsageMetrics) => void };
 export type ModelInfo = { id: string; name: string };
 export type GenerationRequest = { system: string; user: string };
 export interface AIProvider { readonly id: ProviderType; validate(connection: ProviderConnection): Promise<void>; listModels(connection: ProviderConnection): Promise<ModelInfo[]>; generateJson(connection: ProviderConnection, request: GenerationRequest): Promise<unknown>; }
@@ -11,6 +12,8 @@ const plainJsonRequest = (request: GenerationRequest): GenerationRequest => ({ .
 const safeJson = (text: string) => { const trimmed = text.trim(); const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1]?.trim() ?? trimmed; try { return JSON.parse(fenced); } catch { const first = fenced.indexOf('{'); const last = fenced.lastIndexOf('}'); if (first >= 0 && last > first) return JSON.parse(fenced.slice(first, last + 1)); throw new Error('AI provider returned content that does not contain a valid JSON object.'); } };
 const errorDetail = (payload: string) => { try { const parsed = JSON.parse(payload) as { message?: unknown; error?: { message?: unknown } | string; detail?: unknown }; const value = parsed.error && typeof parsed.error === 'object' ? parsed.error.message : parsed.message ?? parsed.error ?? parsed.detail; return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, 400) : ''; } catch { return payload.replace(/\s+/g, ' ').trim().slice(0, 400); } };
 const responseFormatUnsupported = (error: unknown) => error instanceof Error && /AI provider request failed \(4\d\d\).*\b(response[ _-]?format|structured output|json[ _-]?(?:object|mode|schema))\b/i.test(error.message);
+const tokenCount = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined;
+const reportUsage = (connection: ProviderConnection, usage: UsageMetrics) => { try { connection.onUsage?.(usage); } catch (error) { console.warn('[AI provider] could not save usage metrics', error); } };
 async function request(url: string, init: RequestInit, timeoutMs: number) { const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) }); const payload = await response.text(); if (!response.ok) { const detail = errorDetail(payload); const target = new URL(url); console.warn(`[AI provider] ${init.method ?? 'GET'} ${target.origin}${target.pathname} failed with ${response.status}${detail ? `: ${detail}` : ''}`); throw new Error(`AI provider request failed (${response.status})${detail ? `: ${detail}` : '.'}`); } try { return JSON.parse(payload) as unknown; } catch { throw new Error('AI provider returned an invalid JSON response.'); } }
 const publicHttpsUrl = (raw: string) => { const url = new URL(raw); const privateHost = /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/i.test(url.hostname); if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || privateHost) throw new Error('Generic OpenAI-compatible endpoints must use a public HTTPS base URL without credentials. Use Ollama for local endpoints.'); return url.toString().replace(/\/$/, ''); };
 const ollamaUrl = (raw: string | null) => { const url = new URL(raw || 'http://127.0.0.1:11434'); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Ollama URL must be a plain HTTP(S) server URL.'); return url.toString().replace(/\/$/, ''); };
@@ -32,7 +35,7 @@ class OpenAiCompatibleProvider implements AIProvider {
     // the upstream route can return HTTP 200 with an empty `stop` completion.
     const forceToolJson = this.id === 'openrouter' && /^nvidia\/nemotron-3-ultra-550b-a55b:free$/i.test(connection.model);
     type CompletionMessage = { content?: unknown; tool_calls?: Array<{ function?: { name?: string; arguments?: unknown } }>; function_call?: { name?: string; arguments?: unknown } };
-    type Completion = { choices?: Array<{ finish_reason?: string; message?: CompletionMessage; messages?: CompletionMessage[] }> };
+    type Completion = { choices?: Array<{ finish_reason?: string; message?: CompletionMessage; messages?: CompletionMessage[] }>; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown } };
     const completionText = (content: unknown) => {
       if (typeof content === 'string') return content;
       const chunks = Array.isArray(content) ? content : content && typeof content === 'object' ? [content] : [];
@@ -42,9 +45,11 @@ class OpenAiCompatibleProvider implements AIProvider {
         return (!type || type === 'text' || type === 'output_text') && typeof text === 'string' ? [text] : [];
       }).join('');
     };
-    const generate = (withResponseFormat: boolean, withTools = forceToolJson) => {
+    const generate = async (withResponseFormat: boolean, withTools = forceToolJson) => {
       const body = { model: connection.model, temperature: connection.temperature ?? 0, max_tokens: connection.max_output_tokens, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }], ...(withTools ? { tools: [{ type: 'function', function: { name: 'return_structured_result', description: 'Return the requested result as this function’s JSON arguments. Do not write a prose answer.', parameters: { type: 'object', additionalProperties: true } } }], tool_choice: 'required' } : {}), ...(withResponseFormat ? { response_format: { type: 'json_object' } } : {}) };
-      return request(endpoint(this.base(connection), '/chat/completions'), { method: 'POST', headers: this.headers(connection), body: JSON.stringify(body) }, connection.timeout_ms) as Promise<Completion>;
+      const data = await request(endpoint(this.base(connection), '/chat/completions'), { method: 'POST', headers: this.headers(connection), body: JSON.stringify(body) }, connection.timeout_ms) as Completion;
+      reportUsage(connection, { input_tokens: tokenCount(data.usage?.prompt_tokens), output_tokens: tokenCount(data.usage?.completion_tokens), total_tokens: tokenCount(data.usage?.total_tokens) });
+      return data;
     };
     const parseCompletion = (data: Completion) => {
       // Mistral may use `messages` for a multi-completion response. Other
@@ -83,7 +88,7 @@ class OllamaProvider implements AIProvider {
   private base(connection: ProviderConnection) { return ollamaUrl(connection.base_url); }
   async validate(connection: ProviderConnection) { await this.listModels(connection); }
   async listModels(connection: ProviderConnection) { const data = await request(endpoint(this.base(connection), '/api/tags'), {}, connection.timeout_ms) as { models?: Array<{ name?: string }> }; return (data.models ?? []).flatMap(model => model.name ? [{ id: model.name, name: model.name }] : []); }
-  async generateJson(connection: ProviderConnection, prompt: GenerationRequest) { const data = await request(endpoint(this.base(connection), '/api/chat'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: connection.model, stream: false, format: 'json', options: { temperature: connection.temperature ?? 0, num_predict: connection.max_output_tokens }, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }] }) }, connection.timeout_ms) as { message?: { content?: string } }; if (!data.message?.content) throw new Error('Ollama returned no analysis content.'); return safeJson(data.message.content); }
+  async generateJson(connection: ProviderConnection, prompt: GenerationRequest) { const data = await request(endpoint(this.base(connection), '/api/chat'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: connection.model, stream: false, format: 'json', options: { temperature: connection.temperature ?? 0, num_predict: connection.max_output_tokens }, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }] }) }, connection.timeout_ms) as { message?: { content?: string }; prompt_eval_count?: unknown; eval_count?: unknown }; reportUsage(connection, { input_tokens: tokenCount(data.prompt_eval_count), output_tokens: tokenCount(data.eval_count) }); if (!data.message?.content) throw new Error('Ollama returned no analysis content.'); return safeJson(data.message.content); }
 }
 
 class GeminiProvider extends OpenAiCompatibleProvider {
