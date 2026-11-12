@@ -31,22 +31,32 @@ class OpenAiCompatibleProvider implements AIProvider {
     // syntactically valid JSON, then fall back once to plain JSON text because
     // the upstream route can return HTTP 200 with an empty `stop` completion.
     const forceToolJson = this.id === 'openrouter' && /^nvidia\/nemotron-3-ultra-550b-a55b:free$/i.test(connection.model);
-    type CompletionContent = string | { type?: unknown; text?: unknown } | Array<{ type?: unknown; text?: unknown }>;
-    type Completion = { choices?: Array<{ finish_reason?: string; message?: { content?: CompletionContent; tool_calls?: Array<{ function?: { name?: string; arguments?: unknown } }> } }> };
-    const completionText = (content: CompletionContent | undefined) => {
+    type CompletionMessage = { content?: unknown; tool_calls?: Array<{ function?: { name?: string; arguments?: unknown } }>; function_call?: { name?: string; arguments?: unknown } };
+    type Completion = { choices?: Array<{ finish_reason?: string; message?: CompletionMessage; messages?: CompletionMessage[] }> };
+    const completionText = (content: unknown) => {
       if (typeof content === 'string') return content;
-      const chunks = Array.isArray(content) ? content : content ? [content] : [];
-      return chunks.flatMap(chunk => (!chunk?.type || chunk.type === 'text') && typeof chunk.text === 'string' ? [chunk.text] : []).join('');
+      const chunks = Array.isArray(content) ? content : content && typeof content === 'object' ? [content] : [];
+      return chunks.flatMap(chunk => {
+        if (!chunk || typeof chunk !== 'object') return [];
+        const { type, text } = chunk as { type?: unknown; text?: unknown };
+        return (!type || type === 'text' || type === 'output_text') && typeof text === 'string' ? [text] : [];
+      }).join('');
     };
     const generate = (withResponseFormat: boolean, withTools = forceToolJson) => {
       const body = { model: connection.model, temperature: connection.temperature ?? 0, max_tokens: connection.max_output_tokens, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }], ...(withTools ? { tools: [{ type: 'function', function: { name: 'return_structured_result', description: 'Return the requested result as this function’s JSON arguments. Do not write a prose answer.', parameters: { type: 'object', additionalProperties: true } } }], tool_choice: 'required' } : {}), ...(withResponseFormat ? { response_format: { type: 'json_object' } } : {}) };
       return request(endpoint(this.base(connection), '/chat/completions'), { method: 'POST', headers: this.headers(connection), body: JSON.stringify(body) }, connection.timeout_ms) as Promise<Completion>;
     };
     const parseCompletion = (data: Completion) => {
-      const message = data.choices?.[0]?.message;
-      const toolArguments = message?.tool_calls?.filter(call => call.function?.name === 'return_structured_result').map(call => call.function?.arguments).flatMap(argumentsValue => typeof argumentsValue === 'string' ? [argumentsValue] : argumentsValue && typeof argumentsValue === 'object' ? [JSON.stringify(argumentsValue)] : []) ?? [];
-      const content = completionText(message?.content);
-      const candidates = [...toolArguments, ...(content.trim() ? [content] : [])];
+      // Mistral may use `messages` for a multi-completion response. Other
+      // OpenAI-compatible gateways normally use a single `message`; normalize
+      // both before looking for strict JSON, without treating thought/tool
+      // chunks as user-visible answer text.
+      const messages = data.choices?.flatMap(choice => [choice.message, ...(choice.messages ?? [])].filter((message): message is CompletionMessage => Boolean(message))) ?? [];
+      const toolArguments = messages.flatMap(message => [
+        ...(message.tool_calls?.filter(call => call.function?.name === 'return_structured_result').map(call => call.function?.arguments) ?? []),
+        ...(message.function_call?.name === 'return_structured_result' ? [message.function_call.arguments] : []),
+      ]).flatMap(argumentsValue => typeof argumentsValue === 'string' ? [argumentsValue] : argumentsValue && typeof argumentsValue === 'object' ? [JSON.stringify(argumentsValue)] : []);
+      const candidates = [...toolArguments, ...messages.map(message => completionText(message.content)).filter(content => content.trim())];
       if (!candidates.length) throw new Error(`AI provider returned no analysis content${data.choices?.[0]?.finish_reason ? ` (finish reason: ${data.choices[0].finish_reason})` : ''}.`);
       let error: unknown;
       for (const candidate of candidates) { try { return safeJson(candidate); } catch (caught) { error = caught; } }
