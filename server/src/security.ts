@@ -1,6 +1,9 @@
 import crypto from 'node:crypto';
 import sanitizeHtml from 'sanitize-html';
 export const sanitizeSnapshotHtml = (html: string) => sanitizeHtml(html, { allowedTags: ['section','article','div','span','h1','h2','h3','h4','p','ul','ol','li','table','thead','tbody','tr','th','td','strong','em','b','i','br','a','time'], allowedAttributes: { '*': ['id','class','data-snapshot-section','data-snapshot-capture','data-job-title','data-company-name','data-job-location','data-employment-type','data-workplace-type'], a: ['href','title'] }, allowedSchemes: ['http','https','mailto'], allowProtocolRelative: false, disallowedTagsMode: 'discard' });
-export const safeDescriptionHtml = (html: string | null) => sanitizeSnapshotHtml(html ?? '');
+// Snapshot classes and data attributes are useful evidence for site-specific
+// parsers. They must never reach the app UI though: source CSS utility names
+// such as "fixed", "hidden", or "grid" can collide with Tailwind there.
+export const safeDescriptionHtml = (html: string | null) => sanitizeHtml(html ?? '', { allowedTags: ['section','article','div','span','h1','h2','h3','h4','p','ul','ol','li','table','thead','tbody','tr','th','td','strong','em','b','i','br','a','time'], allowedAttributes: { a: ['href','title'] }, allowedSchemes: ['http','https','mailto'], allowProtocolRelative: false, disallowedTagsMode: 'discard' });
 export const createSession = (password: string, secret: string) => { const expires = Date.now() + 7 * 24 * 3600_000; const payload = `${expires}.${crypto.createHash('sha256').update(password).digest('hex')}`; return `${payload}.${crypto.createHmac('sha256', secret).update(payload).digest('hex')}`; };
 export const validSession = (value: string | undefined, password: string, secret: string) => { if (!value) return false; const [expires, digest, sig] = value.split('.'); const payload = `${expires}.${digest}`; const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex'); return Number(expires) > Date.now() && digest === crypto.createHash('sha256').update(password).digest('hex') && sig.length === expected.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected)); };
