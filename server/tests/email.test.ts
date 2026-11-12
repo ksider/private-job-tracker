@@ -21,6 +21,22 @@ describe('email sync foundations', () => {
     const match = matchEmailToJob(jobs, { category: 'rejection', company: 'Amazon', jobTitle: 'Materials Engineer, Global Materials Science', applicationId: null, evidenceQuote: 'We regret to inform you', explanation: 'Employer rejection.' }, 'We regret to inform you.');
     expect(match).toMatchObject({ jobId: 'exact', status: 'exact' });
   });
+  it('does not change a vacancy update date when an email is merely linked', () => {
+    const db = new JobDatabase(':memory:'); const imported = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/email-link', title: 'Process Engineer', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: '2026-10-22T12:00:00.000Z' });
+    db.db.prepare('UPDATE jobs SET updated_at=?, last_activity_at=? WHERE id=?').run('2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', imported.jobId);
+    const before = db.get(imported.jobId)!;
+    const email = db.saveEmail({ uid_validity: '7', imap_uid: 40, received_at: '2026-10-22T12:00:00.000Z', body_text: 'Thank you for your application.', body_hash: 'email-link', category: 'application_confirmation', classification_json: '{}', proposed_job_id: imported.jobId, match_status: 'exact', review_status: 'pending_review', unresolved_reason: null, initial_import: 0 });
+    db.confirmEmail(email.id);
+    expect(db.get(imported.jobId)).toMatchObject({ updated_at: before.updated_at, last_activity_at: before.last_activity_at, last_event_at: before.last_event_at });
+    db.db.close();
+  });
+  it('keeps a vacancy update date unchanged when only card metadata changes', () => {
+    const db = new JobDatabase(':memory:'); const imported = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/card-edit', title: 'Process Engineer', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: '2026-10-22T12:00:00.000Z' });
+    db.db.prepare('UPDATE jobs SET updated_at=?, last_activity_at=? WHERE id=?').run('2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', imported.jobId);
+    db.update(imported.jobId, { notes: 'Checked the company website.' });
+    expect(db.get(imported.jobId)).toMatchObject({ updated_at: '2026-01-01T00:00:00.000Z', last_activity_at: '2026-01-01T00:00:00.000Z' });
+    db.db.close();
+  });
   it('records and reverts a confirmed rejection as an email effect', () => {
     const db = new JobDatabase(':memory:'); const now = '2026-10-22T12:00:00.000Z';
     const imported = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/1', title: 'Process Engineer', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: now });
