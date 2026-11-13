@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import type { InterviewStage, JobEventCreate, JobEventType, JobPatch, JobStatus, TagCreate, TagPatch } from '@job-tracker/shared';
 import type { MatchClassification, MatchResult, ProviderType } from '../ai/schemas.js';
 import { calculateCohortAnalytics } from '../analytics/cohorts.js';
+import { dayInTimeZone, utcRangeForLocalDays } from '../analytics/dates.js';
 
 export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: string; title?: string; company?: string; location?: string; workplaceType?: string; employmentType?: string; descriptionHtml?: string; descriptionText?: string; easyApply?: boolean; warnings: string[]; parseStatus: 'parsed' | 'partial' | 'parse_failed'; parserVersion: string };
 export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; posting_language_code: string | null; geo_source: 'ai' | 'manual' | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; cover_letter_text: string | null; cover_letter_model: string | null; cover_letter_updated_at: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; last_activity_at: string; parse_status: string; last_event_at: string; stage_started_at: string };
@@ -296,30 +297,27 @@ export class JobDatabase {
     END AS stage_started_at
     FROM jobs WHERE id=?`).get(id) as JobRow | undefined; }
   events(id: string) { return this.db.prepare('SELECT * FROM job_events WHERE job_id=? ORDER BY occurred_at DESC, created_at DESC').all(id) as JobEventRow[]; }
-  firstApplicationDay() { return (this.db.prepare(`WITH applications AS (
+  private applicationDates() { return this.db.prepare(`WITH applications AS (
     SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id
     UNION ALL
     SELECT jobs.id, jobs.created_at FROM jobs
     WHERE NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
       AND (jobs.status IN ('sent','interview','result') OR jobs.result_outcome IS NOT NULL
         OR EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening','interview','final_interview','follow_up','rejection_received')))
-  ) SELECT substr(MIN(applied_at), 1, 10) AS day FROM applications`).get() as { day: string | null }).day; }
-  applicationStats(from?: string, to?: string) {
-    const applications = `WITH applications AS (
-      SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id
-      UNION ALL
-      SELECT jobs.id, jobs.created_at FROM jobs
-      WHERE NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
-        AND (jobs.status IN ('sent','interview','result') OR jobs.result_outcome IS NOT NULL
-          OR EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening','interview','final_interview','follow_up','rejection_received')))
-    ) SELECT substr(applied_at, 1, 10) AS day, COUNT(*) AS count FROM applications`;
-    if (!from || !to) return this.db.prepare(`${applications} GROUP BY substr(applied_at, 1, 10) ORDER BY day`).all() as Array<{ day: string; count: number }>;
-    const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1);
-    return this.db.prepare(`${applications} WHERE applied_at >= ? AND applied_at < ? GROUP BY substr(applied_at, 1, 10) ORDER BY day`).all(`${from}T00:00:00.000Z`, end.toISOString()) as Array<{ day: string; count: number }>;
+  ) SELECT job_id, applied_at FROM applications ORDER BY applied_at`).all() as Array<{ job_id: string; applied_at: string }>; }
+  firstApplicationDay(timeZone = 'UTC') { const first = this.applicationDates()[0]; return first ? dayInTimeZone(first.applied_at, timeZone) : null; }
+  applicationStats(from?: string, to?: string, timeZone = 'UTC') {
+    const counts = new Map<string, number>();
+    for (const application of this.applicationDates()) {
+      const day = dayInTimeZone(application.applied_at, timeZone);
+      if (from && to && (day < from || day > to)) continue;
+      counts.set(day, (counts.get(day) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([day, count]) => ({ day, count }));
   }
-  applicationEffectiveness(from?: string, to?: string) {
+  applicationEffectiveness(from?: string, to?: string, timeZone = 'UTC') {
     const values: string[] = []; const where: string[] = [];
-    if (from && to) { const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(`${from}T00:00:00.000Z`, end.toISOString()); }
+    if (from && to) { const range = utcRangeForLocalDays(from, to, timeZone); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(range.start, range.end); }
     const rows = this.db.prepare(`WITH applications AS (
       SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id
       UNION ALL
@@ -336,9 +334,9 @@ export class JobDatabase {
     if (rows.length) { const tagRows = this.db.prepare(`SELECT job_tags.job_id, tags.name FROM job_tags JOIN tags ON tags.id=job_tags.tag_id WHERE job_tags.job_id IN (${rows.map(() => '?').join(',')})`).all(...rows.map(row => row.id)) as Array<{ job_id: string; name: string }>; for (const tag of tagRows) tagsByJob.set(tag.job_id, [...(tagsByJob.get(tag.job_id) ?? []), tag.name]); }
     return rows.map(row => ({ ...row, tags: tagsByJob.get(row.id) ?? [] }));
   }
-  applicationSankey(from?: string, to?: string) {
+  applicationSankey(from?: string, to?: string, timeZone = 'UTC') {
     const values: string[] = []; const where: string[] = [];
-    if (from && to) { const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(`${from}T00:00:00.000Z`, end.toISOString()); }
+    if (from && to) { const range = utcRangeForLocalDays(from, to, timeZone); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(range.start, range.end); }
     const rows = this.db.prepare(`WITH applications AS (
       SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id
       UNION ALL
@@ -360,9 +358,9 @@ export class JobDatabase {
     }
     return rows.map(row => ({ ...row, tags: tagsByJob.get(row.id) ?? [] }));
   }
-  cohortApplications(from?: string, to?: string) {
+  cohortApplications(from?: string, to?: string, timeZone = 'UTC') {
     const values: string[] = []; const where: string[] = [];
-    if (from && to) { const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(`${from}T00:00:00.000Z`, end.toISOString()); }
+    if (from && to) { const range = utcRangeForLocalDays(from, to, timeZone); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(range.start, range.end); }
     return this.db.prepare(`WITH applications AS (
       SELECT job_id, MIN(occurred_at) AS applied_at, 'applied_event' AS application_date_source FROM job_events WHERE type='applied' GROUP BY job_id
       UNION ALL
@@ -383,7 +381,7 @@ export class JobDatabase {
       FROM applications JOIN jobs ON jobs.id=applications.job_id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`).all(...values) as CohortApplicationRow[];
   }
   cohortMissingApplicationDate() { return 0; }
-  strategyCohorts(from?: string, to?: string) { const rows = this.cohortApplications(from, to).map(row => ({ id: row.id, appliedAt: row.applied_at, applicationDateEstimated: row.application_date_source !== 'applied_event', firstResponseEventAt: row.first_response_event_at, firstResponseEmailAt: row.first_response_email_at, firstHrEventAt: row.first_hr_event_at, firstHrEmailAt: row.first_hr_email_at, hasUndatedHrProgression: Boolean(row.has_undated_hr_progression) })); return calculateCohortAnalytics(rows, { asOf: new Date(), missingApplicationDate: this.cohortMissingApplicationDate() }); }
+  strategyCohorts(from?: string, to?: string, timeZone = 'UTC') { const rows = this.cohortApplications(from, to, timeZone).map(row => ({ id: row.id, appliedAt: row.applied_at, applicationDateEstimated: row.application_date_source !== 'applied_event', firstResponseEventAt: row.first_response_event_at, firstResponseEmailAt: row.first_response_email_at, firstHrEventAt: row.first_hr_event_at, firstHrEmailAt: row.first_hr_email_at, hasUndatedHrProgression: Boolean(row.has_undated_hr_progression) })); return calculateCohortAnalytics(rows, { asOf: new Date(), missingApplicationDate: this.cohortMissingApplicationDate() }); }
   jobCounts() { return this.db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status='archived' THEN 1 ELSE 0 END) AS archived FROM jobs").get() as { total: number; archived: number | null }; }
   private insertEvent(jobId: string, type: JobEventType, occurredAt: string, note = '') { this.db.prepare('INSERT INTO job_events (id,job_id,type,occurred_at,note,created_at) VALUES (?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, type, occurredAt, note, new Date().toISOString()); if (hiringStageEventSet.has(type)) this.db.prepare('UPDATE jobs SET last_activity_at=MAX(COALESCE(last_activity_at, created_at), ?) WHERE id=?').run(occurredAt, jobId); }
   appointments(jobId: string) { return this.db.prepare("SELECT * FROM interview_appointments WHERE job_id=? ORDER BY CASE status WHEN 'cancelled' THEN 1 ELSE 0 END, starts_at ASC").all(jobId) as InterviewAppointmentRow[]; }
