@@ -86,14 +86,20 @@ describe('email sync foundations', () => {
   it('keeps secrets out of portable backups and Sheets payloads', () => {
     const db = new JobDatabase(':memory:');
     db.saveBackupSettings({ webhook_url: 'https://script.google.com/macros/s/example/exec', encrypted_webhook_secret: 'encrypted-secret', automatic_enabled: 1, interval_hours: 24 });
+    db.createConnection({ provider_type: 'mistral', display_name: 'Backup provider', encrypted_api_key: 'encrypted-ai-key', model: 'model-a', temperature: 0.1, max_output_tokens: 1200, timeout_ms: 60_000, requests_per_minute: 10, tokens_per_minute: 60_000, enabled: true });
     const portable = JSON.stringify(db.portableBackup()); const sheets = JSON.stringify(db.sheetSyncPayload());
-    expect(portable).not.toContain('encrypted-secret'); expect(sheets).not.toContain('encrypted-secret'); expect(sheets).toContain('"Jobs"'); expect(sheets).toContain('"Emails"');
+    expect(portable).not.toContain('encrypted-secret'); expect(portable).not.toContain('encrypted-ai-key'); expect(sheets).not.toContain('encrypted-secret'); expect(sheets).toContain('"Jobs"'); expect(sheets).toContain('"Emails"');
   });
   it('replaces tracker data from a portable backup while retaining local secrets', () => {
     const source = new JobDatabase(':memory:'); const now = '2026-10-23T12:00:00.000Z';
     const imported = source.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/restore', title: 'Restored Engineer', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: now });
+    const firstModel = source.createConnection({ provider_type: 'mistral', display_name: 'Restored provider', encrypted_api_key: 'encrypted-ai-key', model: 'model-a', temperature: 0.1, max_output_tokens: 1200, timeout_ms: 60_000, requests_per_minute: 10, tokens_per_minute: 60_000, enabled: true });
+    source.createModel(firstModel.provider_id!, { model: 'model-b', temperature: 0.1, max_output_tokens: 1200, timeout_ms: 60_000, enabled: true });
+    source.saveFunctionRoute('generic_parse', { target_type: 'provider', provider_id: firstModel.provider_id, automatic_enabled: true });
     const backup = source.portableBackup(); const target = new JobDatabase(':memory:');
     target.saveBackupSettings({ encrypted_webhook_secret: 'keep-this', automatic_enabled: 0 }); target.restorePortableBackup(backup.data);
     expect(target.get(imported.jobId)).toMatchObject({ title: 'Restored Engineer', company: 'Example' }); expect(target.backupSettings().encrypted_webhook_secret).toBe('keep-this');
+    expect(target.listProviders()).toEqual([expect.objectContaining({ id: firstModel.provider_id, enabled: false, api_key_configured: false, models: [expect.objectContaining({ model: 'model-a', enabled: false }), expect.objectContaining({ model: 'model-b', enabled: false })] })]);
+    expect(target.functionRoute('generic_parse')).toMatchObject({ target_type: 'provider', provider_id: firstModel.provider_id, automatic_enabled: 1 });
   });
 });

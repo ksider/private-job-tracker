@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import { load } from 'cheerio';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
-import type { ProviderRegistry } from '../ai/providers.js';
 import type { SecretStore } from '../ai/secret-store.js';
+import type { AiRouter } from '../ai/router.js';
 import type { JobDatabase, ImapSettingsRow } from '../db/database.js';
 import { classifyEmail } from './classification.js';
 import { matchEmailToJob } from './matching.js';
@@ -25,8 +25,7 @@ const htmlText = (html: string) => load(html).root().text().replace(/\s+/g, ' ')
 
 export class EmailSyncService {
   private running = false;
-  constructor(private readonly db: JobDatabase, private readonly providers: ProviderRegistry, private readonly secrets: SecretStore) {}
-  private aiConnection(connection: NonNullable<ReturnType<JobDatabase['getConnection']>>) { return { provider_type: connection.provider_type, base_url: connection.base_url, api_key: connection.encrypted_api_key ? this.secrets.decrypt(connection.encrypted_api_key) : '', model: connection.model, temperature: connection.temperature, max_output_tokens: connection.max_output_tokens, timeout_ms: connection.timeout_ms, rate_limit_key: connection.id, requests_per_minute: connection.requests_per_minute, tokens_per_minute: connection.tokens_per_minute, onUsage: (usage: { input_tokens?: number; output_tokens?: number; total_tokens?: number }) => this.db.recordAiUsage({ connection_id: connection.id, model: connection.model, purpose: 'email', ...usage }) }; }
+  constructor(private readonly db: JobDatabase, private readonly secrets: SecretStore, private readonly aiRouter: AiRouter) {}
   private connection(credentials: ImapCredentials) {
     return new ImapFlow({ host: credentials.host, port: credentials.port, secure: credentials.tls_mode === 'tls', doSTARTTLS: credentials.tls_mode === 'starttls', auth: { user: credentials.username, pass: credentials.password }, tls: { rejectUnauthorized: true }, logger: false, emitLogs: false, disableCompression: true, socketTimeout: 60_000, greetingTimeout: 30_000 });
   }
@@ -65,10 +64,7 @@ export class EmailSyncService {
     if (!classification) {
       const settings = this.db.imapSettings();
       if (!settings.ai_consent_at) throw new Error('Save consent to send email text to AI first.');
-      const ai = this.db.settings(); const connection = this.db.getConnection(ai.email_connection_id ?? ai.default_connection_id ?? '');
-      if (!connection?.enabled) throw new Error('Configure and select an enabled email AI provider first.');
-      const aiConnection = this.aiConnection(connection);
-      classification = await classifyEmail(this.providers.limited(aiConnection), aiConnection, email.body_text);
+      classification = (await this.aiRouter.run('email', 'email', ({ provider, connection }) => classifyEmail(provider, connection, email.body_text))).value;
     }
     const match = matchEmailToJob(this.db.list({ archive: 'all' }), classification, email.body_text);
     return this.db.classifyEmail(id, { category: classification.category, classification_json: JSON.stringify(classification), proposed_job_id: match.jobId, match_status: match.status, unresolved_reason: match.unresolvedReason, review_status: classification.category === 'other' ? 'ignored' : 'pending_review' });
@@ -112,11 +108,9 @@ export class EmailSyncService {
   }
   private async processEmail(input: { uidValidity: string; uid: number; receivedAt: string; body: string; initialImport: boolean; settings: ImapSettingsRow }) {
     const { settings } = input; let category: string | null = null; let classificationJson: string | null = null; let proposedJobId: string | null = null; let matchStatus: 'exact' | 'probable' | 'no_match' | null = null; let unresolvedReason: string | null = settings.ai_consent_at ? 'ai_not_configured' : 'ai_consent_required';
-    const ai = this.db.settings(); const connection = this.db.getConnection(ai.email_connection_id ?? ai.default_connection_id ?? '');
-    if (settings.ai_consent_at && ai.auto_email_classification && connection?.enabled) {
+    if (settings.ai_consent_at && this.db.functionRoute('email')?.automatic_enabled) {
       try {
-        const aiConnection = this.aiConnection(connection);
-        const classification = await classifyEmail(this.providers.limited(aiConnection), aiConnection, input.body);
+        const classification = (await this.aiRouter.run('email', 'email', ({ provider, connection }) => classifyEmail(provider, connection, input.body))).value;
         category = classification.category; classificationJson = JSON.stringify(classification);
         const match = matchEmailToJob(this.db.list({ archive: 'all' }), classification, input.body); proposedJobId = match.jobId; matchStatus = match.status; unresolvedReason = match.unresolvedReason;
       } catch (error) {
