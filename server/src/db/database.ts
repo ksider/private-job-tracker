@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { InterviewStage, JobEventCreate, JobEventType, JobPatch, JobStatus, TagCreate, TagPatch } from '@job-tracker/shared';
+import type { InterviewStage, JobEventCreate, JobEventPatch, JobEventType, JobPatch, JobStatus, TagCreate, TagPatch } from '@job-tracker/shared';
 import type { MatchClassification, MatchResult, ProviderType } from '../ai/schemas.js';
 import { calculateCohortAnalytics } from '../analytics/cohorts.js';
 import { dayInTimeZone, utcRangeForLocalDays } from '../analytics/dates.js';
@@ -175,6 +175,9 @@ export class JobDatabase {
         SELECT interview_mailbox, uid_validity, last_processed_uid, imap_sync_state.updated_at
         FROM imap_settings CROSS JOIN imap_sync_state WHERE interview_mailbox<>''`);
     }
+    const emailEffectColumns = this.db.prepare('PRAGMA table_info(email_effects)').all() as Array<{ name: string }>;
+    if (!emailEffectColumns.some(column => column.name === 'previous_interview_stage')) this.db.exec('ALTER TABLE email_effects ADD COLUMN previous_interview_stage TEXT');
+    if (!emailEffectColumns.some(column => column.name === 'next_interview_stage')) this.db.exec('ALTER TABLE email_effects ADD COLUMN next_interview_stage TEXT');
     this.db.exec("UPDATE jobs SET status='archived', archive_reason=CASE WHEN EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id AND email_effects.automatic=1) THEN 'email_exact' ELSE 'email_review' END, archive_seen_at=updated_at WHERE status='result' AND result_outcome='rejected' AND EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id)");
   }
   import(parsed: ParsedJob, raw: { html: string; text: string | null; collectorVersion: string; capturedAt: string; pageTitle?: string }) {
@@ -417,6 +420,27 @@ export class JobDatabase {
     return this.db.prepare('SELECT * FROM interview_appointments WHERE id=?').get(appointmentId) as InterviewAppointmentRow;
   }
   addEvent(id: string, event: JobEventCreate) { const old = this.get(id); if (!old) return undefined; this.insertEvent(id, event.type, event.occurred_at, event.note); const interviewStage = ['hr_screening', 'interview', 'final_interview', 'follow_up'].includes(event.type) ? event.type as InterviewStage : null; const changesHiringStage = hiringStageEventSet.has(event.type); this.db.prepare('UPDATE jobs SET status=?, interview_stage=?, updated_at=?, last_activity_at=? WHERE id=?').run(interviewStage ? 'interview' : old.status, interviewStage ?? old.interview_stage, changesHiringStage ? new Date().toISOString() : old.updated_at, changesHiringStage ? [old.last_activity_at, event.occurred_at].sort().at(-1) : old.last_activity_at, id); return this.get(id); }
+  private reconcileTimeline(id: string) {
+    const old = this.get(id); if (!old) return undefined;
+    const latest = this.db.prepare(`SELECT type FROM job_events WHERE job_id=? AND type IN (${hiringStageEventSql}) ORDER BY CASE WHEN type='saved' THEN 1 ELSE 0 END, occurred_at DESC, created_at DESC LIMIT 1`).get(id) as { type: JobEventType } | undefined;
+    const interviewStage = latest && ['hr_screening', 'interview', 'final_interview', 'follow_up'].includes(latest.type) ? latest.type as InterviewStage : null;
+    const eventStatus: Partial<Record<JobEventType, JobStatus>> = { saved: 'saved', applied: 'sent', hr_screening: 'interview', interview: 'interview', final_interview: 'interview', follow_up: 'interview', result: 'result' };
+    const status = old.status === 'archived' ? old.status : latest ? eventStatus[latest.type] ?? old.status : 'saved';
+    const nextInterviewStage = status === 'interview' ? interviewStage ?? old.interview_stage ?? 'hr_screening' : null;
+    const activity = this.db.prepare(`SELECT MAX(occurred_at) AS occurred_at FROM job_events WHERE job_id=? AND type IN (${hiringStageEventSql})`).get(id) as { occurred_at: string | null };
+    const lastActivityAt = [old.created_at, old.captured_at, activity.occurred_at].filter((value): value is string => Boolean(value)).sort().at(-1)!;
+    this.db.prepare('UPDATE jobs SET status=?, interview_stage=?, updated_at=?, last_activity_at=? WHERE id=?').run(status, nextInterviewStage, new Date().toISOString(), lastActivityAt, id);
+    return this.get(id);
+  }
+  updateEvent(jobId: string, eventId: string, patch: JobEventPatch) {
+    const event = this.db.prepare('SELECT * FROM job_events WHERE id=? AND job_id=?').get(eventId, jobId) as JobEventRow | undefined; if (!event) return undefined;
+    const transaction = this.db.transaction(() => { this.db.prepare('UPDATE job_events SET type=?, occurred_at=?, note=? WHERE id=? AND job_id=?').run(patch.type ?? event.type, patch.occurred_at ?? event.occurred_at, patch.note ?? event.note, eventId, jobId); return this.reconcileTimeline(jobId); });
+    return transaction();
+  }
+  deleteEvent(jobId: string, eventId: string) {
+    const transaction = this.db.transaction(() => { const deleted = this.db.prepare('DELETE FROM job_events WHERE id=? AND job_id=?').run(eventId, jobId); return deleted.changes ? this.reconcileTimeline(jobId) : undefined; });
+    return transaction();
+  }
   update(id: string, patch: JobPatch, _options: { touchActivity?: boolean } = {}) {
     const old = this.get(id); if (!old) return undefined;
     const status = patch.interview_stage ? 'interview' : patch.status ?? old.status;
@@ -511,12 +535,12 @@ export class JobDatabase {
     this.db.prepare('INSERT INTO email_records (id,uid_validity,imap_uid,received_at,body_text,body_hash,category,classification_json,proposed_job_id,match_status,review_status,unresolved_reason,initial_import,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, input.uid_validity, input.imap_uid, input.received_at, input.body_text, input.body_hash, input.category, input.classification_json, input.proposed_job_id, input.match_status, input.review_status, input.unresolved_reason, input.initial_import, now, now);
     return this.email(id)!;
   }
-  email(id: string) { return this.db.prepare('SELECT email_records.*, jobs.title AS job_title, jobs.company AS job_company, EXISTS(SELECT 1 FROM email_effects WHERE email_effects.email_id=email_records.id AND email_effects.reverted_at IS NULL) AS reversible_effect FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id WHERE email_records.id=?').get(id) as EmailRecordRow | undefined; }
+  email(id: string) { return this.db.prepare("SELECT email_records.*, jobs.title AS job_title, jobs.company AS job_company, CASE WHEN email_records.review_status='applied' THEN 1 ELSE 0 END AS reversible_effect FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id WHERE email_records.id=?").get(id) as EmailRecordRow | undefined; }
   classifyEmail(id: string, input: Pick<EmailRecordRow, 'category' | 'classification_json' | 'proposed_job_id' | 'match_status' | 'unresolved_reason' | 'review_status'>) {
     this.db.prepare('UPDATE email_records SET category=?, classification_json=?, proposed_job_id=?, match_status=?, unresolved_reason=?, review_status=?, updated_at=? WHERE id=?').run(input.category, input.classification_json, input.proposed_job_id, input.match_status, input.unresolved_reason, input.review_status, new Date().toISOString(), id);
     return this.email(id);
   }
-  reviewEmails() { return this.db.prepare("SELECT email_records.*, jobs.title AS job_title, jobs.company AS job_company, EXISTS(SELECT 1 FROM email_effects WHERE email_effects.email_id=email_records.id AND email_effects.reverted_at IS NULL) AS reversible_effect FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id WHERE email_records.review_status IN ('pending_review', 'applied') ORDER BY CASE email_records.review_status WHEN 'pending_review' THEN 0 ELSE 1 END, email_records.received_at DESC").all() as EmailRecordRow[]; }
+  reviewEmails() { return this.db.prepare("SELECT email_records.*, jobs.title AS job_title, jobs.company AS job_company, CASE WHEN email_records.review_status='applied' THEN 1 ELSE 0 END AS reversible_effect FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id WHERE email_records.review_status IN ('pending_review', 'applied') ORDER BY CASE email_records.review_status WHEN 'pending_review' THEN 0 ELSE 1 END, email_records.received_at DESC").all() as EmailRecordRow[]; }
   emailLog(limit = 50, offset = 0) {
     const safeLimit = Math.max(1, Math.min(Math.floor(limit) || 50, 100)); const safeOffset = Math.max(0, Math.floor(offset) || 0);
     const items = this.db.prepare('SELECT email_records.id, email_records.uid_validity, email_records.imap_uid, email_records.received_at, email_records.category, email_records.proposed_job_id, email_records.match_status, email_records.review_status, email_records.unresolved_reason, email_records.initial_import, email_records.created_at, email_records.updated_at, jobs.title AS job_title, jobs.company AS job_company FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id ORDER BY email_records.received_at DESC LIMIT ? OFFSET ?').all(safeLimit, safeOffset) as EmailLogRow[];
@@ -564,7 +588,7 @@ export class JobDatabase {
         const archiveReason = automatic && email.match_status === 'exact' ? 'email_exact' : 'email_review';
         this.db.prepare('UPDATE jobs SET status=?, result_outcome=?, interview_stage=NULL, archive_reason=?, archive_seen_at=?, updated_at=?, last_activity_at=MAX(COALESCE(last_activity_at, created_at), ?) WHERE id=?').run('archived', 'rejected', archiveReason, automatic ? null : now, now, now, jobId);
         this.insertEvent(jobId, 'email_status_changed', now, `${automatic ? 'Automatic' : 'Confirmed'} email update: ${job.status} → archive (rejected)`);
-        this.db.prepare('INSERT INTO email_effects (id,email_id,job_id,previous_status,previous_result_outcome,next_status,next_result_outcome,automatic,applied_at,reverted_at) VALUES (?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(email_id,job_id) DO UPDATE SET previous_status=excluded.previous_status, previous_result_outcome=excluded.previous_result_outcome, next_status=excluded.next_status, next_result_outcome=excluded.next_result_outcome, automatic=excluded.automatic, applied_at=excluded.applied_at, reverted_at=NULL').run(crypto.randomUUID(), email.id, jobId, job.status, job.result_outcome, 'archived', 'rejected', automatic ? 1 : 0, now);
+        this.db.prepare('INSERT INTO email_effects (id,email_id,job_id,previous_status,previous_result_outcome,previous_interview_stage,next_status,next_result_outcome,next_interview_stage,automatic,applied_at,reverted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(email_id,job_id) DO UPDATE SET previous_status=excluded.previous_status, previous_result_outcome=excluded.previous_result_outcome, previous_interview_stage=excluded.previous_interview_stage, next_status=excluded.next_status, next_result_outcome=excluded.next_result_outcome, next_interview_stage=excluded.next_interview_stage, automatic=excluded.automatic, applied_at=excluded.applied_at, reverted_at=NULL').run(crypto.randomUUID(), email.id, jobId, job.status, job.result_outcome, job.interview_stage, 'archived', 'rejected', null, automatic ? 1 : 0, now);
       }
     }); transaction(); return this.email(email.id);
   }
@@ -577,6 +601,7 @@ export class JobDatabase {
       if (job.status !== 'interview') {
         this.db.prepare('UPDATE jobs SET status=?, interview_stage=?, result_outcome=NULL, archive_reason=NULL, archive_seen_at=NULL, updated_at=?, last_activity_at=MAX(COALESCE(last_activity_at, created_at), ?) WHERE id=?').run('interview', appointment.stage, now, now, jobId);
         this.insertEvent(jobId, appointment.stage, now, 'Interview invitation confirmed from email');
+        this.db.prepare('INSERT INTO email_effects (id,email_id,job_id,previous_status,previous_result_outcome,previous_interview_stage,next_status,next_result_outcome,next_interview_stage,automatic,applied_at,reverted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(email_id,job_id) DO UPDATE SET previous_status=excluded.previous_status, previous_result_outcome=excluded.previous_result_outcome, previous_interview_stage=excluded.previous_interview_stage, next_status=excluded.next_status, next_result_outcome=excluded.next_result_outcome, next_interview_stage=excluded.next_interview_stage, automatic=excluded.automatic, applied_at=excluded.applied_at, reverted_at=NULL').run(crypto.randomUUID(), id, jobId, job.status, job.result_outcome, job.interview_stage, 'interview', null, appointment.stage, 0, now);
       }
       const existing = this.db.prepare('SELECT id FROM interview_appointments WHERE source_email_id=?').get(id) as { id: string } | undefined;
       if (!existing) this.createAppointment(jobId, { ...appointment, source_email_id: id, status: 'proposed' });
@@ -585,9 +610,24 @@ export class JobDatabase {
   autoApplyRejection(id: string) { const email = this.email(id); if (!email || email.initial_import || !['exact', 'probable'].includes(email.match_status ?? '') || email.category !== 'rejection' || !email.proposed_job_id) return undefined; return this.applyEmailEffect(email, email.proposed_job_id, true); }
   ignoreEmail(id: string) { const email = this.email(id); if (!email) return undefined; this.db.prepare("UPDATE email_records SET review_status='ignored', updated_at=? WHERE id=?").run(new Date().toISOString(), id); return this.email(id); }
   revertEmailEffect(id: string) {
-    const effect = this.db.prepare('SELECT * FROM email_effects WHERE email_id=? AND reverted_at IS NULL ORDER BY applied_at DESC LIMIT 1').get(id) as { email_id: string; job_id: string; previous_status: JobStatus; previous_result_outcome: JobRow['result_outcome']; next_status: JobStatus; next_result_outcome: JobRow['result_outcome'] } | undefined;
-    if (!effect) return undefined; const job = this.get(effect.job_id); if (!job || job.status !== effect.next_status || job.result_outcome !== effect.next_result_outcome) throw new Error('The vacancy changed after this email action and cannot be reverted automatically.');
-    const now = new Date().toISOString(); const transaction = this.db.transaction(() => { this.db.prepare('UPDATE jobs SET status=?, result_outcome=?, archive_reason=NULL, archive_seen_at=NULL, updated_at=?, last_activity_at=MAX(COALESCE(last_activity_at, created_at), ?) WHERE id=?').run(effect.previous_status, effect.previous_result_outcome, now, now, job.id); this.db.prepare('UPDATE email_effects SET reverted_at=? WHERE email_id=? AND reverted_at IS NULL').run(now, id); this.db.prepare("UPDATE email_records SET review_status='pending_review', unresolved_reason='reverted_action', updated_at=? WHERE id=?").run(now, id); this.insertEvent(job.id, 'email_status_changed', now, 'Email update reverted and returned to review'); }); transaction(); return this.email(id);
+    const email = this.email(id); if (!email || email.review_status !== 'applied') return undefined;
+    const effect = this.db.prepare('SELECT * FROM email_effects WHERE email_id=? AND reverted_at IS NULL ORDER BY applied_at DESC LIMIT 1').get(id) as { email_id: string; job_id: string; previous_status: JobStatus; previous_result_outcome: JobRow['result_outcome']; previous_interview_stage: InterviewStage | null; next_status: JobStatus; next_result_outcome: JobRow['result_outcome']; next_interview_stage: InterviewStage | null; automatic: number; applied_at: string } | undefined;
+    const appointment = this.db.prepare('SELECT * FROM interview_appointments WHERE source_email_id=?').get(id) as InterviewAppointmentRow | undefined;
+    const jobId = effect?.job_id ?? appointment?.job_id ?? email.proposed_job_id; const job = jobId ? this.get(jobId) : undefined;
+    const canRestore = Boolean(effect && job && job.status === effect.next_status && job.result_outcome === effect.next_result_outcome && job.interview_stage === effect.next_interview_stage);
+    const now = new Date().toISOString(); const transaction = this.db.transaction(() => {
+      if (effect && job && canRestore) this.db.prepare('UPDATE jobs SET status=?, result_outcome=?, interview_stage=?, archive_reason=NULL, archive_seen_at=NULL, updated_at=?, last_activity_at=MAX(COALESCE(last_activity_at, created_at), ?) WHERE id=?').run(effect.previous_status, effect.previous_result_outcome, effect.previous_interview_stage ?? (effect.previous_status === 'interview' ? 'interview' : null), now, now, job.id);
+      this.db.prepare('DELETE FROM interview_appointments WHERE source_email_id=?').run(id);
+      if (jobId) {
+        const classificationEvent = email.category === 'rejection' ? 'rejection_received' : 'email_detected'; const classificationNote = email.category === 'rejection' ? 'Email classification: rejection' : `Email classification: ${email.category ?? 'other'}`;
+        this.db.prepare('DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? AND note=? ORDER BY created_at DESC LIMIT 1)').run(jobId, classificationEvent, email.received_at, classificationNote);
+        if (effect?.next_status === 'interview' && effect.next_interview_stage) this.db.prepare("DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? AND note='Interview invitation confirmed from email' ORDER BY created_at DESC LIMIT 1)").run(jobId, effect.next_interview_stage, effect.applied_at);
+        if (effect?.next_status === 'archived') this.db.prepare('DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? ORDER BY created_at DESC LIMIT 1)').run(jobId, 'email_status_changed', effect.applied_at);
+      }
+      this.db.prepare('UPDATE email_effects SET reverted_at=? WHERE email_id=? AND reverted_at IS NULL').run(now, id);
+      this.db.prepare("UPDATE email_records SET review_status='pending_review', unresolved_reason='reverted_action', updated_at=? WHERE id=?").run(now, id);
+      if (jobId && this.get(jobId)) this.insertEvent(jobId, 'email_status_changed', now, canRestore ? 'Email match reverted; vacancy restored and email returned to review' : 'Email match reverted and returned to review');
+    }); transaction(); return this.email(id);
   }
   backupSettings() { return this.db.prepare('SELECT * FROM backup_settings WHERE id=1').get() as BackupSettingsRow; }
   displaySettings() { return this.db.prepare('SELECT inactive_after_days, updated_at FROM display_settings WHERE id=1').get() as DisplaySettingsRow; }

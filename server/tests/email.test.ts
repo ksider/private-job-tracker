@@ -45,6 +45,25 @@ describe('email sync foundations', () => {
     db.revertEmailEffect(email.id); expect(db.get(imported.jobId)).toMatchObject({ status: 'saved', result_outcome: null }); expect(db.email(email.id)).toMatchObject({ review_status: 'pending_review', unresolved_reason: 'reverted_action', reversible_effect: 0 });
     db.confirmEmail(email.id); expect(db.get(imported.jobId)).toMatchObject({ status: 'archived', result_outcome: 'rejected' }); expect(db.email(email.id)).toMatchObject({ reversible_effect: 1 });
   });
+  it('allows cancelling an applied email match even when it did not change the vacancy', () => {
+    const db = new JobDatabase(':memory:'); const now = '2026-10-22T12:00:00.000Z';
+    const imported = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/confirmation', title: 'Process Engineer', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: now });
+    const email = db.saveEmail({ uid_validity: '7', imap_uid: 46, received_at: now, body_text: 'Thank you for applying.', body_hash: 'confirmation', category: 'application_confirmation', classification_json: '{}', proposed_job_id: imported.jobId, match_status: 'exact', review_status: 'pending_review', unresolved_reason: null, initial_import: 0 });
+    db.confirmEmail(email.id); expect(db.email(email.id)).toMatchObject({ review_status: 'applied', reversible_effect: 1 });
+    db.revertEmailEffect(email.id); expect(db.email(email.id)).toMatchObject({ review_status: 'pending_review', unresolved_reason: 'reverted_action', reversible_effect: 0 }); expect(db.get(imported.jobId)).toMatchObject({ status: 'saved' });
+    db.db.close();
+  });
+  it('cancels a wrongly matched interview and can confirm it for another vacancy', () => {
+    const db = new JobDatabase(':memory:'); const now = '2026-10-22T12:00:00.000Z'; const raw = { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: now };
+    const wrong = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/wrong-interview', title: 'Wrong role', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, raw);
+    const right = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/right-interview', title: 'Right role', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, raw);
+    const email = db.saveEmail({ uid_validity: '7', imap_uid: 47, received_at: now, body_text: 'Interview invitation.', body_hash: 'interview-invitation', category: 'interview_invitation', classification_json: '{}', proposed_job_id: wrong.jobId, match_status: 'probable', review_status: 'pending_review', unresolved_reason: null, initial_import: 0 });
+    const appointment = { stage: 'interview' as const, starts_at: '2026-10-25T10:00:00.000Z', time_zone: 'Europe/Belgrade', format: 'video' as const, meeting_url: 'https://meet.example.test/room', note: '' };
+    db.confirmInterviewInvitation(email.id, wrong.jobId, appointment); expect(db.get(wrong.jobId)).toMatchObject({ status: 'interview', interview_stage: 'interview' }); expect(db.appointments(wrong.jobId)).toHaveLength(1); expect(db.email(email.id)).toMatchObject({ reversible_effect: 1 });
+    db.revertEmailEffect(email.id); expect(db.get(wrong.jobId)).toMatchObject({ status: 'saved', interview_stage: null }); expect(db.appointments(wrong.jobId)).toHaveLength(0); expect(db.events(wrong.jobId)).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: 'interview', note: 'Interview invitation confirmed from email' })])); expect(db.email(email.id)).toMatchObject({ review_status: 'pending_review', reversible_effect: 0 });
+    db.confirmInterviewInvitation(email.id, right.jobId, appointment); expect(db.get(right.jobId)).toMatchObject({ status: 'interview' }); expect(db.appointments(right.jobId)).toEqual([expect.objectContaining({ source_email_id: email.id })]);
+    db.db.close();
+  });
   it('archives a probable email rejection in the review column', () => {
     const db = new JobDatabase(':memory:'); const now = '2026-10-22T12:00:00.000Z';
     const imported = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/2', title: 'Materials Engineer', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: now });
