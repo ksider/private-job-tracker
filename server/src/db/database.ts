@@ -6,7 +6,7 @@ import { dayInTimeZone, utcRangeForLocalDays } from '../analytics/dates.js';
 
 export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: string; title?: string; company?: string; location?: string; workplaceType?: string; employmentType?: string; descriptionHtml?: string; descriptionText?: string; easyApply?: boolean; warnings: string[]; parseStatus: 'parsed' | 'partial' | 'parse_failed'; parserVersion: string };
 export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; posting_language_code: string | null; geo_source: 'ai' | 'manual' | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; cover_letter_text: string | null; cover_letter_model: string | null; cover_letter_updated_at: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; last_activity_at: string; parse_status: string; last_event_at: string; stage_started_at: string };
-export type ApplicationEffectivenessRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; result_outcome: JobRow['result_outcome']; applied_at: string; response_at: string | null; ai_classification: MatchClassification | null; tags: string[] };
+export type ApplicationEffectivenessRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; result_outcome: JobRow['result_outcome']; applied_at: string; response_at: string | null; hr_response_at: string | null; ai_classification: MatchClassification | null; tags: string[] };
 export type ApplicationSankeyRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; posting_language_code: string | null; ai_classification: MatchClassification | null; result_outcome: JobRow['result_outcome']; applied_at: string; reached_hr: number; reached_technical: number; reached_final: number; reached_follow_up: number; tags: Array<{ id: string; name: string; color: string }> };
 export type CohortApplicationRow = { id: string; applied_at: string; application_date_source: 'applied_event' | 'created_at'; first_response_event_at: string | null; first_response_email_at: string | null; first_hr_event_at: string | null; first_hr_email_at: string | null; has_undated_hr_progression: number };
 export type JobEventRow = { id: string; job_id: string; type: JobEventType; occurred_at: string; note: string; created_at: string };
@@ -363,15 +363,42 @@ export class JobDatabase {
     const rows = this.db.prepare(`WITH applications AS (
       SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id
       UNION ALL
-      SELECT jobs.id, COALESCE((SELECT MIN(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up')), jobs.created_at)
+      SELECT jobs.id, jobs.created_at
       FROM jobs
-      WHERE (jobs.status IN ('sent', 'interview', 'result') OR jobs.result_outcome IS NOT NULL)
-        AND NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
+      WHERE NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
+        AND (jobs.status IN ('sent','interview','result') OR jobs.result_outcome IS NOT NULL
+          OR EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening','interview','final_interview','follow_up','rejection_received')))
+    ), response_candidates AS (
+      SELECT applications.job_id, MIN(job_events.occurred_at) AS response_at
+      FROM applications JOIN job_events ON job_events.job_id=applications.job_id
+      WHERE job_events.type IN ('rejection_received','hr_screening','interview','final_interview','follow_up') AND job_events.occurred_at >= applications.applied_at
+      GROUP BY applications.job_id
+      UNION ALL
+      SELECT applications.job_id, MIN(email_records.received_at) AS response_at
+      FROM applications JOIN email_records ON email_records.proposed_job_id=applications.job_id
+      WHERE email_records.review_status='applied' AND email_records.category IN ('rejection','interview_invitation','assessment','decision_delayed','offer') AND email_records.received_at >= applications.applied_at
+      GROUP BY applications.job_id
+    ), first_responses AS (
+      SELECT job_id, MIN(response_at) AS response_at FROM response_candidates GROUP BY job_id
+    ), hr_response_candidates AS (
+      SELECT applications.job_id, MIN(job_events.occurred_at) AS hr_response_at
+      FROM applications JOIN job_events ON job_events.job_id=applications.job_id
+      WHERE job_events.type IN ('hr_screening','interview','final_interview','follow_up') AND job_events.occurred_at >= applications.applied_at
+      GROUP BY applications.job_id
+      UNION ALL
+      SELECT applications.job_id, MIN(email_records.received_at) AS hr_response_at
+      FROM applications JOIN email_records ON email_records.proposed_job_id=applications.job_id
+      WHERE email_records.review_status='applied' AND email_records.category IN ('interview_invitation','offer') AND email_records.received_at >= applications.applied_at
+      GROUP BY applications.job_id
+    ), hr_responses AS (
+      SELECT job_id, MIN(hr_response_at) AS hr_response_at FROM hr_response_candidates GROUP BY job_id
     )
       SELECT jobs.id, jobs.source, jobs.geo_country_code, jobs.geo_country, jobs.result_outcome, applications.applied_at,
-        (SELECT MIN(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up') AND occurred_at >= applications.applied_at) AS response_at,
+        first_responses.response_at, hr_responses.hr_response_at,
         (SELECT classification FROM job_match_analyses WHERE job_id=jobs.id AND status='completed' ORDER BY completed_at DESC LIMIT 1) AS ai_classification
-      FROM jobs JOIN applications ON applications.job_id=jobs.id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`).all(...values) as Array<Omit<ApplicationEffectivenessRow, 'tags'>>;
+      FROM jobs JOIN applications ON applications.job_id=jobs.id
+      LEFT JOIN first_responses ON first_responses.job_id=jobs.id
+      LEFT JOIN hr_responses ON hr_responses.job_id=jobs.id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`).all(...values) as Array<Omit<ApplicationEffectivenessRow, 'tags'>>;
     const tagsByJob = new Map<string, string[]>();
     if (rows.length) { const tagRows = this.db.prepare(`SELECT job_tags.job_id, tags.name FROM job_tags JOIN tags ON tags.id=job_tags.tag_id WHERE job_tags.job_id IN (${rows.map(() => '?').join(',')})`).all(...rows.map(row => row.id)) as Array<{ job_id: string; name: string }>; for (const tag of tagRows) tagsByJob.set(tag.job_id, [...(tagsByJob.get(tag.job_id) ?? []), tag.name]); }
     return rows.map(row => ({ ...row, tags: tagsByJob.get(row.id) ?? [] }));

@@ -51,6 +51,17 @@ const median = (values: number[]) => {
 };
 const rounded = (value: number) => Math.round(value * 10) / 10;
 
+export function calculateResponseTimeStatistics(responseTimes: number[]) {
+  if (responseTimes.some(value => !Number.isFinite(value) || value < 0)) throw new Error('Response-time statistics require finite, non-negative intervals.');
+  if (!responseTimes.length) return { observations: 0, averageDays: null, medianDays: null };
+  const averageDays = responseTimes.reduce((sum, value) => sum + value, 0) / responseTimes.length;
+  const medianDays = median(responseTimes)!;
+  // Mean and median have no reliable ordering for a finite sample; their only
+  // data invariant here is that both are derived from the same valid intervals.
+  if (!Number.isFinite(averageDays) || !Number.isFinite(medianDays)) throw new Error('Response-time statistics invariant violated.');
+  return { observations: responseTimes.length, averageDays, medianDays };
+}
+
 export function calculateCohortAnalytics(applications: CohortApplication[], options: { asOf: Date; missingApplicationDate: number; horizons?: number[] }): CohortAnalytics {
   const asOf = options.asOf.getTime();
   const horizons = options.horizons ?? [7, 14, 30];
@@ -60,6 +71,7 @@ export function calculateCohortAnalytics(applications: CohortApplication[], opti
     return [{ ...application, appliedAt, responseAt: earliestAfter(appliedAt, application.firstResponseEventAt, application.firstResponseEmailAt), hrAt: earliestAfter(appliedAt, application.firstHrEventAt, application.firstHrEmailAt) }];
   });
   const responseTimes = prepared.flatMap(application => application.responseAt === null || application.responseAt > asOf ? [] : [(application.responseAt - application.appliedAt) / dayMs]);
+  const responseTimeStatistics = calculateResponseTimeStatistics(responseTimes);
   const incompleteHistory = prepared.filter(application => application.hasUndatedHrProgression && application.hrAt === null);
   const metrics = horizons.map(horizonDays => {
     const cutoff = asOf - horizonDays * dayMs;
@@ -88,13 +100,13 @@ export function calculateCohortAnalytics(applications: CohortApplication[], opti
     quality: {
       applicationsWithKnownDate: prepared.length,
       estimatedApplicationDates: prepared.filter(application => application.applicationDateEstimated).length,
-      confirmedResponses: responseTimes.length,
-      applicationsWithoutConfirmedResponse: prepared.length - responseTimes.length,
+      confirmedResponses: responseTimeStatistics.observations,
+      applicationsWithoutConfirmedResponse: prepared.length - responseTimeStatistics.observations,
       incompleteHistory: incompleteHistory.length + options.missingApplicationDate,
       missingApplicationDate: options.missingApplicationDate,
       hrProgressionMissingDate: incompleteHistory.length,
       medianResponseDays: median(responseTimes.map(rounded)),
-      responseTimeObservations: responseTimes.length
+      responseTimeObservations: responseTimeStatistics.observations
     }
   };
 }
