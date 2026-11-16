@@ -13,10 +13,11 @@ export type JobEventRow = { id: string; job_id: string; type: JobEventType; occu
 export type InterviewAppointmentStatus = 'proposed' | 'confirmed' | 'cancelled';
 export type InterviewAppointmentRow = { id: string; job_id: string; stage: InterviewStage; starts_at: string; time_zone: string | null; format: 'video' | 'phone' | 'in_person' | 'other'; meeting_url: string | null; note: string; source_email_id: string | null; status: InterviewAppointmentStatus; created_at: string; updated_at: string };
 export type TagRow = { id: string; name: string; color: string; created_at: string; updated_at: string };
-export type AiConnectionRow = { id: string; provider_id: string | null; sort_order: number; provider_type: ProviderType; display_name: string; base_url: string | null; encrypted_api_key: string; model: string; temperature: number; max_output_tokens: number; timeout_ms: number; requests_per_minute: number; tokens_per_minute: number; email_requests_per_minute: number; enabled: number; provider_enabled: number; profile_consent_at: string | null; created_at: string; updated_at: string };
+export type AiConnectionRow = { id: string; provider_id: string | null; sort_order: number; provider_type: ProviderType; display_name: string; base_url: string | null; encrypted_api_key: string; model: string; temperature: number; max_output_tokens: number; timeout_ms: number; requests_per_minute: number; tokens_per_minute: number; email_requests_per_minute: number; enabled: number; model_enabled: number; provider_enabled: number; profile_consent_at: string | null; created_at: string; updated_at: string };
 export type AiUsageSummary = { requests: number; input_tokens: number | null; output_tokens: number | null; total_tokens: number | null; last_used_at: string | null };
-export type AiConnectionPublic = Omit<AiConnectionRow, 'encrypted_api_key' | 'email_requests_per_minute' | 'enabled' | 'provider_enabled'> & { enabled: boolean; api_key_configured: boolean; usage: AiUsageSummary };
+export type AiConnectionPublic = Omit<AiConnectionRow, 'encrypted_api_key' | 'email_requests_per_minute' | 'enabled' | 'model_enabled' | 'provider_enabled'> & { enabled: boolean; model_enabled: boolean; api_key_configured: boolean; usage: AiUsageSummary };
 export type AiProviderRow = { id: string; provider_type: ProviderType; display_name: string; base_url: string | null; encrypted_api_key: string; requests_per_minute: number; tokens_per_minute: number; enabled: number; profile_consent_at: string | null; created_at: string; updated_at: string };
+export type AiProviderPublic = Omit<AiProviderRow, 'encrypted_api_key' | 'enabled'> & { enabled: boolean; api_key_configured: boolean; models: AiConnectionPublic[] };
 export type AiFunctionKey = 'match' | 'tags' | 'location' | 'generic_parse' | 'snapshot_parse' | 'email' | 'cover_letter' | 'strategy';
 export type AiFunctionRouteRow = { function_key: AiFunctionKey; target_type: 'provider' | 'model' | null; provider_id: string | null; model_id: string | null; automatic_enabled: number; updated_at: string };
 export type AiSettingsRow = { default_connection_id: string | null; default_model: string | null; tag_connection_id: string | null; email_connection_id: string | null; generic_parse_connection_id: string | null; snapshot_parse_connection_id: string | null; auto_match_on_import: number; auto_tags_on_import: number; auto_generic_parse_on_import: number; auto_location_on_import: number; auto_email_classification: number };
@@ -152,7 +153,7 @@ export class JobDatabase {
     const fullLegacyConnection = connectionColumns.some(column => column.name === 'provider_type') && connectionColumns.some(column => column.name === 'display_name') && connectionColumns.some(column => column.name === 'encrypted_api_key') && connectionColumns.some(column => column.name === 'model');
     if (fullLegacyConnection) {
       this.db.exec('CREATE INDEX IF NOT EXISTS ai_models_provider_order ON ai_provider_connections(provider_id, sort_order, created_at)');
-      const legacyConnections = this.db.prepare('SELECT * FROM ai_provider_connections WHERE provider_id IS NULL').all() as Array<Omit<AiConnectionRow, 'provider_id' | 'sort_order' | 'provider_enabled'>>;
+      const legacyConnections = this.db.prepare('SELECT * FROM ai_provider_connections WHERE provider_id IS NULL').all() as Array<Omit<AiConnectionRow, 'provider_id' | 'sort_order' | 'model_enabled' | 'provider_enabled'>>;
       const insertProvider = this.db.prepare('INSERT INTO ai_providers (id,provider_type,display_name,base_url,encrypted_api_key,requests_per_minute,tokens_per_minute,enabled,profile_consent_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
       const attachModel = this.db.prepare('UPDATE ai_provider_connections SET provider_id=?, sort_order=0 WHERE id=?');
       const migrateConnections = this.db.transaction(() => {
@@ -546,12 +547,12 @@ export class JobDatabase {
   latestSnapshot(id: string) { return this.db.prepare('SELECT * FROM snapshots WHERE job_id=? ORDER BY created_at DESC LIMIT 1').get(id) as { source: string; source_url: string; page_title: string | null; raw_html: string; raw_text: string | null; captured_at: string } | undefined; }
   private connectionSelect = `SELECT c.id, c.provider_id, c.sort_order, p.provider_type, p.display_name, p.base_url, p.encrypted_api_key,
     c.model, c.temperature, c.max_output_tokens, c.timeout_ms, p.requests_per_minute, p.tokens_per_minute,
-    c.email_requests_per_minute, CASE WHEN c.enabled=1 AND p.enabled=1 THEN 1 ELSE 0 END AS enabled,
+    c.email_requests_per_minute, CASE WHEN c.enabled=1 AND p.enabled=1 THEN 1 ELSE 0 END AS enabled, c.enabled AS model_enabled,
     p.enabled AS provider_enabled, p.profile_consent_at, c.created_at, c.updated_at
     FROM ai_provider_connections c JOIN ai_providers p ON p.id=c.provider_id`;
   listConnections() { return (this.db.prepare(`${this.connectionSelect} ORDER BY p.created_at DESC, c.sort_order, c.created_at`).all() as AiConnectionRow[]).map(this.publicConnection); }
   private usageSummary(connectionId: string, model: string): AiUsageSummary { const row = this.db.prepare('SELECT COUNT(*) AS requests, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, SUM(total_tokens) AS total_tokens, MAX(created_at) AS last_used_at FROM ai_usage_events WHERE connection_id=? AND model=?').get(connectionId, model) as AiUsageSummary; return { requests: Number(row.requests), input_tokens: row.input_tokens === null ? null : Number(row.input_tokens), output_tokens: row.output_tokens === null ? null : Number(row.output_tokens), total_tokens: row.total_tokens === null ? null : Number(row.total_tokens), last_used_at: row.last_used_at }; }
-  private publicConnection = ({ encrypted_api_key, email_requests_per_minute: _legacyEmailRequestsPerMinute, enabled, provider_enabled: _providerEnabled, ...row }: AiConnectionRow): AiConnectionPublic => ({ ...row, enabled: Boolean(enabled), api_key_configured: Boolean(encrypted_api_key), usage: this.usageSummary(row.id, row.model) });
+  private publicConnection = ({ encrypted_api_key, email_requests_per_minute: _legacyEmailRequestsPerMinute, enabled, model_enabled, provider_enabled: _providerEnabled, ...row }: AiConnectionRow): AiConnectionPublic => ({ ...row, enabled: Boolean(enabled), model_enabled: Boolean(model_enabled), api_key_configured: Boolean(encrypted_api_key), usage: this.usageSummary(row.id, row.model) });
   recordAiUsage(input: { connection_id: string; model: string; purpose: string; input_tokens?: number; output_tokens?: number; total_tokens?: number }) { const safeCount = (value: number | undefined) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : null; this.db.prepare('INSERT INTO ai_usage_events (id,connection_id,model,purpose,input_tokens,output_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?)').run(crypto.randomUUID(), input.connection_id, input.model, input.purpose, safeCount(input.input_tokens), safeCount(input.output_tokens), safeCount(input.total_tokens), new Date().toISOString()); }
   getConnection(id: string) { return this.db.prepare(`${this.connectionSelect} WHERE c.id=?`).get(id) as AiConnectionRow | undefined; }
   createConnection(input: { provider_type: ProviderType; display_name: string; base_url?: string; encrypted_api_key: string; model: string; temperature: number; max_output_tokens: number; timeout_ms: number; requests_per_minute: number; tokens_per_minute: number; enabled: boolean }) {
@@ -584,12 +585,33 @@ export class JobDatabase {
     });
     return remove(id);
   }
+  private publicProvider = ({ encrypted_api_key, enabled, ...provider }: AiProviderRow): AiProviderPublic => ({ ...provider, enabled: Boolean(enabled), api_key_configured: Boolean(encrypted_api_key), models: this.listConnections().filter(model => model.provider_id === provider.id) });
   listProviders() {
     const providers = this.db.prepare('SELECT * FROM ai_providers ORDER BY created_at DESC').all() as AiProviderRow[];
-    const models = this.listConnections();
-    return providers.map(({ encrypted_api_key, enabled, ...provider }) => ({ ...provider, enabled: Boolean(enabled), api_key_configured: Boolean(encrypted_api_key), models: models.filter(model => model.provider_id === provider.id) }));
+    return providers.map(this.publicProvider);
   }
   getProvider(id: string) { return this.db.prepare('SELECT * FROM ai_providers WHERE id=?').get(id) as AiProviderRow | undefined; }
+  createProvider(input: { provider_type: ProviderType; display_name: string; base_url?: string; encrypted_api_key: string; requests_per_minute: number; tokens_per_minute: number; enabled: boolean }) {
+    const now = new Date().toISOString(); const id = crypto.randomUUID();
+    this.db.prepare('INSERT INTO ai_providers (id,provider_type,display_name,base_url,encrypted_api_key,requests_per_minute,tokens_per_minute,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(id, input.provider_type, input.display_name, input.base_url || null, input.encrypted_api_key, input.requests_per_minute, input.tokens_per_minute, input.enabled ? 1 : 0, now, now);
+    return this.publicProvider(this.getProvider(id)!);
+  }
+  updateProvider(id: string, input: Partial<{ provider_type: ProviderType; display_name: string; base_url: string; encrypted_api_key: string; requests_per_minute: number; tokens_per_minute: number; enabled: boolean }>) {
+    const old = this.getProvider(id); if (!old) return undefined; const now = new Date().toISOString();
+    const providerType = input.provider_type ?? old.provider_type; const displayName = input.display_name ?? old.display_name; const baseUrl = input.base_url === undefined ? old.base_url : input.base_url || null; const rpm = input.requests_per_minute ?? old.requests_per_minute; const tpm = input.tokens_per_minute ?? old.tokens_per_minute;
+    const update = this.db.transaction(() => {
+      this.db.prepare('UPDATE ai_providers SET provider_type=?, display_name=?, base_url=?, encrypted_api_key=?, requests_per_minute=?, tokens_per_minute=?, enabled=?, updated_at=? WHERE id=?').run(providerType, displayName, baseUrl, input.encrypted_api_key ?? old.encrypted_api_key, rpm, tpm, input.enabled === undefined ? old.enabled : input.enabled ? 1 : 0, now, id);
+      this.db.prepare('UPDATE ai_provider_connections SET provider_type=?, display_name=?, base_url=?, requests_per_minute=?, tokens_per_minute=?, updated_at=? WHERE provider_id=?').run(providerType, displayName, baseUrl, rpm, tpm, now, id);
+    });
+    update(); return this.publicProvider(this.getProvider(id)!);
+  }
+  deleteProvider(id: string) {
+    if (!this.getProvider(id)) return false;
+    this.listConnections().filter(model => model.provider_id === id).forEach(model => this.deleteConnection(model.id));
+    if (!this.getProvider(id)) return true;
+    this.db.prepare("UPDATE ai_function_routes SET target_type=NULL, provider_id=NULL, model_id=NULL, updated_at=? WHERE target_type='provider' AND provider_id=?").run(new Date().toISOString(), id);
+    return this.db.prepare('DELETE FROM ai_providers WHERE id=?').run(id).changes > 0;
+  }
   createModel(providerId: string, input: { model: string; temperature: number; max_output_tokens: number; timeout_ms: number; enabled: boolean }) {
     const provider = this.getProvider(providerId); if (!provider) return undefined; const now = new Date().toISOString(); const id = crypto.randomUUID();
     const nextOrder = Number((this.db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS value FROM ai_provider_connections WHERE provider_id=?').get(providerId) as { value: number }).value);
@@ -600,6 +622,15 @@ export class JobDatabase {
     const old = this.getConnection(id); if (!old) return undefined; const now = new Date().toISOString();
     this.db.prepare('UPDATE ai_provider_connections SET model=?, temperature=?, max_output_tokens=?, timeout_ms=?, sort_order=?, enabled=COALESCE(?,enabled), updated_at=? WHERE id=?').run(input.model ?? old.model, input.temperature ?? old.temperature, input.max_output_tokens ?? old.max_output_tokens, input.timeout_ms ?? old.timeout_ms, input.sort_order ?? old.sort_order, input.enabled === undefined ? null : input.enabled ? 1 : 0, now, id);
     return this.publicConnection(this.getConnection(id)!);
+  }
+  deleteModel(id: string) {
+    const remove = this.db.transaction((modelId: string) => {
+      if (!this.getConnection(modelId)) return false;
+      this.db.prepare('UPDATE ai_settings SET default_connection_id=CASE WHEN default_connection_id=? THEN NULL ELSE default_connection_id END, tag_connection_id=CASE WHEN tag_connection_id=? THEN NULL ELSE tag_connection_id END, email_connection_id=CASE WHEN email_connection_id=? THEN NULL ELSE email_connection_id END, generic_parse_connection_id=CASE WHEN generic_parse_connection_id=? THEN NULL ELSE generic_parse_connection_id END, snapshot_parse_connection_id=CASE WHEN snapshot_parse_connection_id=? THEN NULL ELSE snapshot_parse_connection_id END WHERE id=1').run(modelId, modelId, modelId, modelId, modelId);
+      this.db.prepare("UPDATE ai_function_routes SET target_type=NULL, model_id=NULL, provider_id=NULL, updated_at=? WHERE target_type='model' AND model_id=?").run(new Date().toISOString(), modelId);
+      return this.db.prepare('DELETE FROM ai_provider_connections WHERE id=?').run(modelId).changes > 0;
+    });
+    return remove(id);
   }
   functionRoutes() { return this.db.prepare('SELECT * FROM ai_function_routes ORDER BY function_key').all() as AiFunctionRouteRow[]; }
   functionRoute(key: AiFunctionKey) { return this.db.prepare('SELECT * FROM ai_function_routes WHERE function_key=?').get(key) as AiFunctionRouteRow | undefined; }
