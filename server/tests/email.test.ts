@@ -67,7 +67,7 @@ describe('email sync foundations', () => {
     const interviewed = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/manual-interview', title: 'Role', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, raw);
     const untouched = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/manual-none', title: 'Role', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, raw);
     const makeEmail = (uid: number) => db.saveEmail({ uid_validity: 'manual', imap_uid: uid, received_at: now, body_text: 'A message', body_hash: `manual-${uid}`, category: 'other', classification_json: '{}', proposed_job_id: null, match_status: 'no_match', review_status: 'pending_review', unresolved_reason: null, initial_import: 0 });
-    const rejection = makeEmail(1); db.confirmEmail(rejection.id, rejected.jobId, 'rejection'); expect(db.get(rejected.jobId)).toMatchObject({ status: 'archived', result_outcome: 'rejected' });
+    const rejection = makeEmail(1); db.confirmEmail(rejection.id, rejected.jobId, 'rejection'); expect(db.get(rejected.jobId)).toMatchObject({ status: 'archived', result_outcome: 'rejected' }); expect(db.moveArchiveEmailReview(rejected.jobId, 'email_exact')).toMatchObject({ archive_reason: 'email_exact' });
     const interview = makeEmail(2); db.confirmInterview(interview.id, interviewed.jobId); expect(db.get(interviewed.jobId)).toMatchObject({ status: 'interview' });
     const none = makeEmail(3); db.confirmEmail(none.id, untouched.jobId, 'none'); expect(db.get(untouched.jobId)).toMatchObject({ status: 'saved' }); expect(db.email(none.id)).toMatchObject({ review_action: 'none', review_status: 'applied' });
     db.db.close();

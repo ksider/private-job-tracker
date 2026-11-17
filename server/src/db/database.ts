@@ -743,7 +743,7 @@ export class JobDatabase {
   moveArchiveEmailReview(jobId: string, archiveReason: 'email_exact' | 'email_review') {
     const job = this.get(jobId);
     if (!job || job.status !== 'archived' || !['email_exact', 'email_review'].includes(job.archive_reason ?? '')) return undefined;
-    const email = this.db.prepare("SELECT email_records.* FROM email_records JOIN email_effects ON email_effects.email_id=email_records.id WHERE email_effects.job_id=? AND email_records.category='rejection' ORDER BY email_effects.applied_at DESC LIMIT 1").get(jobId) as EmailRecordRow | undefined;
+    const email = this.db.prepare("SELECT email_records.* FROM email_records JOIN email_effects ON email_effects.email_id=email_records.id WHERE email_effects.job_id=? AND (email_records.category='rejection' OR email_records.review_action='rejection') ORDER BY email_effects.applied_at DESC LIMIT 1").get(jobId) as EmailRecordRow | undefined;
     if (!email) throw new Error('No rejection email is linked to this archived vacancy.');
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
