@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import { load } from 'cheerio';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import type { SecretStore } from '../ai/secret-store.js';
@@ -8,6 +7,7 @@ import type { JobDatabase, ImapSettingsRow } from '../db/database.js';
 import { classifyEmail } from './classification.js';
 import { matchEmailToJob } from './matching.js';
 import { EmailClassificationSchema, type ImapSettingsInput } from './schemas.js';
+import { extractEmailText, type EmailTextSource } from './body.js';
 
 type ImapCredentials = Pick<ImapSettingsRow, 'host' | 'port' | 'tls_mode' | 'username'> & { password: string };
 type SyncResult = { processed: number; rejections: number; reviewItems: number; initialImport: boolean };
@@ -19,9 +19,6 @@ export const imapErrorMessage = (error: unknown) => {
   const status = typeof value?.responseStatus === 'string' ? value.responseStatus : '';
   return response ? `${message}${status ? ` (${status})` : ''}: ${response}` : message;
 };
-
-const cleanBody = (text: string) => text.replace(/\r/g, '').replace(/^\s*(unsubscribe|manage preferences|privacy policy).*$/gim, '').replace(/^On .+wrote:\s*[\s\S]*$/im, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 100_000);
-const htmlText = (html: string) => load(html).root().text().replace(/\s+/g, ' ');
 
 export class EmailSyncService {
   private running = false;
@@ -56,6 +53,7 @@ export class EmailSyncService {
   }
   async classifyExisting(id: string) {
     const email = this.db.email(id); if (!email) throw new Error('Email review item not found.');
+    if (email.body_source === 'missing') throw new Error('This email has no usable text to classify.');
     let classification;
     if (email.classification_json) {
       try { classification = EmailClassificationSchema.safeParse(JSON.parse(email.classification_json)).data; }
@@ -99,16 +97,16 @@ export class EmailSyncService {
         maxUid = Math.max(maxUid, message.uid); if (this.db.hasEmail(uidValidity, message.uid) || !message.source) continue;
         const parsed = await simpleParser(message.source as Buffer);
         if (parsed.from?.value.some(sender => sender.address?.trim().toLowerCase() === settings.username.trim().toLowerCase())) continue;
-        const body = cleanBody(parsed.text || (typeof parsed.html === 'string' ? htmlText(parsed.html) : '')); if (!body) continue;
-        const email = await this.processEmail({ uidValidity, uid: message.uid, receivedAt: new Date(message.internalDate ?? Date.now()).toISOString(), body, initialImport, settings });
+        const extracted = extractEmailText(parsed.text, typeof parsed.html === 'string' ? parsed.html : null);
+        const email = await this.processEmail({ uidValidity, uid: message.uid, receivedAt: new Date(message.internalDate ?? Date.now()).toISOString(), body: extracted.text, bodySource: extracted.source, initialImport, settings });
         processed++; if (email.category === 'rejection') rejections++; if (email.review_status === 'pending_review') reviewItems++;
       }
       this.db.saveSyncState(mailboxPath, rawUidValidity, maxUid); return { processed, rejections, reviewItems, initialImport };
     } finally { lock.release(); }
   }
-  private async processEmail(input: { uidValidity: string; uid: number; receivedAt: string; body: string; initialImport: boolean; settings: ImapSettingsRow }) {
-    const { settings } = input; let category: string | null = null; let classificationJson: string | null = null; let proposedJobId: string | null = null; let matchStatus: 'exact' | 'probable' | 'no_match' | null = null; let unresolvedReason: string | null = settings.ai_consent_at ? 'ai_not_configured' : 'ai_consent_required';
-    if (settings.ai_consent_at && this.db.functionRoute('email')?.automatic_enabled) {
+  private async processEmail(input: { uidValidity: string; uid: number; receivedAt: string; body: string; bodySource: EmailTextSource; initialImport: boolean; settings: ImapSettingsRow }) {
+    const { settings } = input; let category: string | null = null; let classificationJson: string | null = null; let proposedJobId: string | null = null; let matchStatus: 'exact' | 'probable' | 'no_match' | null = null; let unresolvedReason: string | null = input.bodySource === 'missing' ? 'missing_text' : settings.ai_consent_at ? 'ai_not_configured' : 'ai_consent_required';
+    if (input.bodySource !== 'missing' && settings.ai_consent_at && this.db.functionRoute('email')?.automatic_enabled) {
       try {
         const classification = (await this.aiRouter.run('email', 'email', ({ provider, connection }) => classifyEmail(provider, connection, input.body))).value;
         category = classification.category; classificationJson = JSON.stringify(classification);
@@ -122,7 +120,7 @@ export class EmailSyncService {
       }
     }
     const reviewStatus = category === 'other' ? 'ignored' : 'pending_review';
-    const saved = this.db.saveEmail({ uid_validity: input.uidValidity, imap_uid: input.uid, received_at: input.receivedAt, body_text: input.body, body_hash: crypto.createHash('sha256').update(input.body).digest('hex'), category, classification_json: classificationJson, proposed_job_id: proposedJobId, match_status: matchStatus, review_status: reviewStatus, unresolved_reason: unresolvedReason, initial_import: input.initialImport ? 1 : 0 });
+    const saved = this.db.saveEmail({ uid_validity: input.uidValidity, imap_uid: input.uid, received_at: input.receivedAt, body_text: input.body, body_source: input.bodySource, body_hash: crypto.createHash('sha256').update(input.body).digest('hex'), category, classification_json: classificationJson, proposed_job_id: proposedJobId, match_status: matchStatus, review_status: reviewStatus, unresolved_reason: unresolvedReason, initial_import: input.initialImport ? 1 : 0 });
     const shouldArchive = saved.match_status === 'exact' || (settings.rejection_handling === 'manual_review' && saved.match_status === 'probable');
     if (!input.initialImport && settings.rejection_handling !== 'notifications_only' && saved.category === 'rejection' && shouldArchive) return this.db.autoApplyRejection(saved.id) ?? saved;
     return saved;

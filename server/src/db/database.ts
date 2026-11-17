@@ -24,7 +24,7 @@ export type AiSettingsRow = { default_connection_id: string | null; default_mode
 export type AiAnalysisRow = { id: string; job_id: string; provider_connection_id: string | null; provider_type: ProviderType; model: string; profile_hash: string; job_description_hash: string; prompt_version: string; classification: MatchClassification | null; result_json: string | null; status: 'running' | 'completed' | 'failed'; error_message: string | null; created_at: string; completed_at: string | null };
 export type AiStrategyAnalysisRow = { id: string; provider_connection_id: string | null; provider_type: ProviderType; model: string; stats_hash: string; prompt_version: string; range_from: string | null; range_to: string | null; result_json: string; created_at: string };
 export type ImapSettingsRow = { host: string; port: number; tls_mode: 'tls' | 'starttls'; username: string; encrypted_password: string; mailbox: string; interview_mailbox: string; rejection_mailbox: string; enabled: number; sync_interval_minutes: number; initial_sync_days: number; rejection_handling: 'manual_review' | 'auto_exact' | 'notifications_only'; ai_consent_at: string | null; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; processed_count: number; rejection_count: number; review_count: number; updated_at: string };
-export type EmailRecordRow = { id: string; uid_validity: string; imap_uid: number; received_at: string; body_text: string; body_hash: string; category: string | null; classification_json: string | null; proposed_job_id: string | null; match_status: 'exact' | 'probable' | 'no_match' | null; review_status: 'pending_review' | 'applied' | 'ignored' | 'reverted'; unresolved_reason: string | null; initial_import: number; created_at: string; updated_at: string; job_title?: string | null; job_company?: string | null; reversible_effect?: number };
+export type EmailRecordRow = { id: string; uid_validity: string; imap_uid: number; received_at: string; body_text: string; body_source: 'plain' | 'html_fallback' | 'missing'; body_hash: string; category: string | null; classification_json: string | null; proposed_job_id: string | null; match_status: 'exact' | 'probable' | 'no_match' | null; review_status: 'pending_review' | 'applied' | 'ignored' | 'reverted'; review_action: 'none' | 'rejection' | 'interview' | null; unresolved_reason: string | null; initial_import: number; created_at: string; updated_at: string; job_title?: string | null; job_company?: string | null; reversible_effect?: number };
 export type EmailLogRow = Omit<EmailRecordRow, 'body_text' | 'body_hash' | 'classification_json'>;
 export type BackupSettingsRow = { webhook_url: string; encrypted_webhook_secret: string; automatic_enabled: number; interval_hours: number; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; updated_at: string };
 export type DisplaySettingsRow = { inactive_after_days: number; updated_at: string };
@@ -186,8 +186,8 @@ export class JobDatabase {
         mailbox TEXT PRIMARY KEY, uid_validity TEXT, last_processed_uid INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS email_records (
-        id TEXT PRIMARY KEY, uid_validity TEXT NOT NULL, imap_uid INTEGER NOT NULL, received_at TEXT NOT NULL, body_text TEXT NOT NULL, body_hash TEXT NOT NULL,
-        category TEXT, classification_json TEXT, proposed_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, match_status TEXT, review_status TEXT NOT NULL DEFAULT 'pending_review', unresolved_reason TEXT, initial_import INTEGER NOT NULL DEFAULT 0,
+        id TEXT PRIMARY KEY, uid_validity TEXT NOT NULL, imap_uid INTEGER NOT NULL, received_at TEXT NOT NULL, body_text TEXT NOT NULL, body_source TEXT NOT NULL DEFAULT 'plain', body_hash TEXT NOT NULL,
+        category TEXT, classification_json TEXT, proposed_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, match_status TEXT, review_status TEXT NOT NULL DEFAULT 'pending_review', review_action TEXT, unresolved_reason TEXT, initial_import INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(uid_validity, imap_uid));
       CREATE INDEX IF NOT EXISTS email_records_review ON email_records(review_status, received_at DESC);
       CREATE TABLE IF NOT EXISTS email_effects (
@@ -218,6 +218,9 @@ export class JobDatabase {
     const emailEffectColumns = this.db.prepare('PRAGMA table_info(email_effects)').all() as Array<{ name: string }>;
     if (!emailEffectColumns.some(column => column.name === 'previous_interview_stage')) this.db.exec('ALTER TABLE email_effects ADD COLUMN previous_interview_stage TEXT');
     if (!emailEffectColumns.some(column => column.name === 'next_interview_stage')) this.db.exec('ALTER TABLE email_effects ADD COLUMN next_interview_stage TEXT');
+    const emailColumns = this.db.prepare('PRAGMA table_info(email_records)').all() as Array<{ name: string }>;
+    if (!emailColumns.some(column => column.name === 'body_source')) this.db.exec("ALTER TABLE email_records ADD COLUMN body_source TEXT NOT NULL DEFAULT 'plain'");
+    if (!emailColumns.some(column => column.name === 'review_action')) this.db.exec('ALTER TABLE email_records ADD COLUMN review_action TEXT');
     this.db.exec("UPDATE jobs SET status='archived', archive_reason=CASE WHEN EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id AND email_effects.automatic=1) THEN 'email_exact' ELSE 'email_review' END, archive_seen_at=updated_at WHERE status='result' AND result_outcome='rejected' AND EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id)");
   }
   import(parsed: ParsedJob, raw: { html: string; text: string | null; collectorVersion: string; capturedAt: string; pageTitle?: string }) {
@@ -707,9 +710,9 @@ export class JobDatabase {
   acquireImapSyncLease(milliseconds = 10 * 60_000) { const now = new Date(); const until = new Date(now.getTime() + milliseconds).toISOString(); return this.db.prepare("UPDATE imap_sync_lock SET locked_until=? WHERE id=1 AND (locked_until IS NULL OR locked_until < ?)").run(until, now.toISOString()).changes > 0; }
   releaseImapSyncLease() { this.db.prepare('UPDATE imap_sync_lock SET locked_until=NULL WHERE id=1').run(); }
   hasEmail(uidValidity: string, uid: number) { return Boolean(this.db.prepare('SELECT 1 FROM email_records WHERE uid_validity=? AND imap_uid=?').get(uidValidity, uid)); }
-  saveEmail(input: Omit<EmailRecordRow, 'id' | 'created_at' | 'updated_at' | 'job_title' | 'job_company'>) {
+  saveEmail(input: Omit<EmailRecordRow, 'id' | 'created_at' | 'updated_at' | 'job_title' | 'job_company' | 'body_source' | 'review_action'> & Partial<Pick<EmailRecordRow, 'body_source' | 'review_action'>>) {
     const now = new Date().toISOString(); const id = crypto.randomUUID();
-    this.db.prepare('INSERT INTO email_records (id,uid_validity,imap_uid,received_at,body_text,body_hash,category,classification_json,proposed_job_id,match_status,review_status,unresolved_reason,initial_import,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, input.uid_validity, input.imap_uid, input.received_at, input.body_text, input.body_hash, input.category, input.classification_json, input.proposed_job_id, input.match_status, input.review_status, input.unresolved_reason, input.initial_import, now, now);
+    this.db.prepare('INSERT INTO email_records (id,uid_validity,imap_uid,received_at,body_text,body_source,body_hash,category,classification_json,proposed_job_id,match_status,review_status,review_action,unresolved_reason,initial_import,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, input.uid_validity, input.imap_uid, input.received_at, input.body_text, input.body_source ?? 'plain', input.body_hash, input.category, input.classification_json, input.proposed_job_id, input.match_status, input.review_status, input.review_action ?? null, input.unresolved_reason, input.initial_import, now, now);
     return this.email(id)!;
   }
   email(id: string) { return this.db.prepare("SELECT email_records.*, jobs.title AS job_title, jobs.company AS job_company, CASE WHEN email_records.review_status='applied' THEN 1 ELSE 0 END AS reversible_effect FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id WHERE email_records.id=?").get(id) as EmailRecordRow | undefined; }
@@ -755,12 +758,12 @@ export class JobDatabase {
     });
     transaction(); return this.get(jobId);
   }
-  private applyEmailEffect(email: EmailRecordRow, jobId: string, automatic: boolean) {
+  private applyEmailEffect(email: EmailRecordRow, jobId: string, automatic: boolean, action: 'none' | 'rejection' = email.category === 'rejection' ? 'rejection' : 'none') {
     const job = this.get(jobId); if (!job) return undefined;
-    const now = new Date().toISOString(); const rejection = email.category === 'rejection';
+    const now = new Date().toISOString(); const rejection = action === 'rejection';
     const transaction = this.db.transaction(() => {
-      this.db.prepare('UPDATE email_records SET proposed_job_id=?, review_status=?, unresolved_reason=NULL, updated_at=? WHERE id=?').run(jobId, 'applied', now, email.id);
-      this.insertEvent(jobId, rejection ? 'rejection_received' : 'email_detected', email.received_at, rejection ? 'Email classification: rejection' : `Email classification: ${email.category ?? 'other'}`);
+      this.db.prepare('UPDATE email_records SET proposed_job_id=?, review_status=?, review_action=?, unresolved_reason=NULL, updated_at=? WHERE id=?').run(jobId, 'applied', action, now, email.id);
+      this.insertEvent(jobId, rejection ? 'rejection_received' : 'email_detected', email.received_at, rejection ? 'Email review action: rejection' : 'Email review action: none');
       if (rejection && !(job.status === 'result' && job.result_outcome === 'offer')) {
         const archiveReason = automatic && email.match_status === 'exact' ? 'email_exact' : 'email_review';
         this.db.prepare('UPDATE jobs SET status=?, result_outcome=?, interview_stage=NULL, archive_reason=?, archive_seen_at=?, updated_at=?, last_activity_at=MAX(COALESCE(last_activity_at, created_at), ?) WHERE id=?').run('archived', 'rejected', archiveReason, automatic ? null : now, now, now, jobId);
@@ -769,12 +772,24 @@ export class JobDatabase {
       }
     }); transaction(); return this.email(email.id);
   }
-  confirmEmail(id: string, jobId?: string) { const email = this.email(id); if (!email) return undefined; return this.applyEmailEffect(email, jobId ?? email.proposed_job_id ?? '', false); }
+  confirmEmail(id: string, jobId?: string, action?: 'none' | 'rejection') { const email = this.email(id); if (!email) return undefined; return this.applyEmailEffect(email, jobId ?? email.proposed_job_id ?? '', false, action ?? (email.category === 'rejection' ? 'rejection' : 'none')); }
+  confirmInterview(id: string, jobId: string) {
+    const email = this.email(id); const job = this.get(jobId); if (!email || !job) return undefined;
+    const now = new Date().toISOString(); const transaction = this.db.transaction(() => {
+      this.db.prepare('UPDATE email_records SET proposed_job_id=?, review_status=?, review_action=?, unresolved_reason=NULL, updated_at=? WHERE id=?').run(jobId, 'applied', 'interview', now, id);
+      this.insertEvent(jobId, 'email_detected', email.received_at, 'Email review action: interview');
+      if (job.status !== 'interview') {
+        this.db.prepare('UPDATE jobs SET status=?, interview_stage=?, result_outcome=NULL, archive_reason=NULL, archive_seen_at=NULL, updated_at=?, last_activity_at=MAX(COALESCE(last_activity_at, created_at), ?) WHERE id=?').run('interview', 'interview', now, now, jobId);
+        this.insertEvent(jobId, 'interview', now, 'Interview confirmed from email');
+        this.db.prepare('INSERT INTO email_effects (id,email_id,job_id,previous_status,previous_result_outcome,previous_interview_stage,next_status,next_result_outcome,next_interview_stage,automatic,applied_at,reverted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(email_id,job_id) DO UPDATE SET previous_status=excluded.previous_status, previous_result_outcome=excluded.previous_result_outcome, previous_interview_stage=excluded.previous_interview_stage, next_status=excluded.next_status, next_result_outcome=excluded.next_result_outcome, next_interview_stage=excluded.next_interview_stage, automatic=excluded.automatic, applied_at=excluded.applied_at, reverted_at=NULL').run(crypto.randomUUID(), id, jobId, job.status, job.result_outcome, job.interview_stage, 'interview', null, 'interview', 0, now);
+      }
+    }); transaction(); return this.email(id);
+  }
   confirmInterviewInvitation(id: string, jobId: string, appointment: Pick<InterviewAppointmentRow, 'stage' | 'starts_at' | 'time_zone' | 'format' | 'meeting_url' | 'note'>) {
     const email = this.email(id); const job = this.get(jobId); if (!email || !job) return undefined;
     const now = new Date().toISOString(); const transaction = this.db.transaction(() => {
-      this.db.prepare('UPDATE email_records SET proposed_job_id=?, review_status=?, unresolved_reason=NULL, updated_at=? WHERE id=?').run(jobId, 'applied', now, id);
-      this.insertEvent(jobId, 'email_detected', email.received_at, 'Email classification: interview invitation');
+      this.db.prepare('UPDATE email_records SET proposed_job_id=?, review_status=?, review_action=?, unresolved_reason=NULL, updated_at=? WHERE id=?').run(jobId, 'applied', 'interview', now, id);
+      this.insertEvent(jobId, 'email_detected', email.received_at, 'Email review action: interview');
       if (job.status !== 'interview') {
         this.db.prepare('UPDATE jobs SET status=?, interview_stage=?, result_outcome=NULL, archive_reason=NULL, archive_seen_at=NULL, updated_at=?, last_activity_at=MAX(COALESCE(last_activity_at, created_at), ?) WHERE id=?').run('interview', appointment.stage, now, now, jobId);
         this.insertEvent(jobId, appointment.stage, now, 'Interview invitation confirmed from email');
@@ -784,7 +799,7 @@ export class JobDatabase {
       if (!existing) this.createAppointment(jobId, { ...appointment, source_email_id: id, status: 'proposed' });
     }); transaction(); return this.email(id);
   }
-  autoApplyRejection(id: string) { const email = this.email(id); if (!email || email.initial_import || !['exact', 'probable'].includes(email.match_status ?? '') || email.category !== 'rejection' || !email.proposed_job_id) return undefined; return this.applyEmailEffect(email, email.proposed_job_id, true); }
+  autoApplyRejection(id: string) { const email = this.email(id); if (!email || email.initial_import || !['exact', 'probable'].includes(email.match_status ?? '') || email.category !== 'rejection' || !email.proposed_job_id) return undefined; return this.applyEmailEffect(email, email.proposed_job_id, true, 'rejection'); }
   ignoreEmail(id: string) { const email = this.email(id); if (!email) return undefined; this.db.prepare("UPDATE email_records SET review_status='ignored', updated_at=? WHERE id=?").run(new Date().toISOString(), id); return this.email(id); }
   revertEmailEffect(id: string) {
     const email = this.email(id); if (!email || email.review_status !== 'applied') return undefined;
@@ -796,13 +811,13 @@ export class JobDatabase {
       if (effect && job && canRestore) this.db.prepare('UPDATE jobs SET status=?, result_outcome=?, interview_stage=?, archive_reason=NULL, archive_seen_at=NULL, updated_at=?, last_activity_at=MAX(COALESCE(last_activity_at, created_at), ?) WHERE id=?').run(effect.previous_status, effect.previous_result_outcome, effect.previous_interview_stage ?? (effect.previous_status === 'interview' ? 'interview' : null), now, now, job.id);
       this.db.prepare('DELETE FROM interview_appointments WHERE source_email_id=?').run(id);
       if (jobId) {
-        const classificationEvent = email.category === 'rejection' ? 'rejection_received' : 'email_detected'; const classificationNote = email.category === 'rejection' ? 'Email classification: rejection' : `Email classification: ${email.category ?? 'other'}`;
+        const action = email.review_action ?? (email.category === 'rejection' ? 'rejection' : 'none'); const classificationEvent = action === 'rejection' ? 'rejection_received' : 'email_detected'; const classificationNote = action === 'rejection' ? 'Email review action: rejection' : action === 'interview' ? 'Email review action: interview' : 'Email review action: none';
         this.db.prepare('DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? AND note=? ORDER BY created_at DESC LIMIT 1)').run(jobId, classificationEvent, email.received_at, classificationNote);
-        if (effect?.next_status === 'interview' && effect.next_interview_stage) this.db.prepare("DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? AND note='Interview invitation confirmed from email' ORDER BY created_at DESC LIMIT 1)").run(jobId, effect.next_interview_stage, effect.applied_at);
+        if (effect?.next_status === 'interview' && effect.next_interview_stage) { this.db.prepare("DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? AND note='Interview invitation confirmed from email' ORDER BY created_at DESC LIMIT 1)").run(jobId, effect.next_interview_stage, effect.applied_at); this.db.prepare("DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? AND note='Interview confirmed from email' ORDER BY created_at DESC LIMIT 1)").run(jobId, effect.next_interview_stage, effect.applied_at); }
         if (effect?.next_status === 'archived') this.db.prepare('DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? ORDER BY created_at DESC LIMIT 1)').run(jobId, 'email_status_changed', effect.applied_at);
       }
       this.db.prepare('UPDATE email_effects SET reverted_at=? WHERE email_id=? AND reverted_at IS NULL').run(now, id);
-      this.db.prepare("UPDATE email_records SET review_status='pending_review', unresolved_reason='reverted_action', updated_at=? WHERE id=?").run(now, id);
+      this.db.prepare("UPDATE email_records SET review_status='pending_review', review_action=NULL, unresolved_reason='reverted_action', updated_at=? WHERE id=?").run(now, id);
       if (jobId && this.get(jobId)) this.insertEvent(jobId, 'email_status_changed', now, canRestore ? 'Email match reverted; vacancy restored and email returned to review' : 'Email match reverted and returned to review');
     }); transaction(); return this.email(id);
   }

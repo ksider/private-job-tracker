@@ -47,4 +47,4 @@ export const ImapSettingsSchema = z.object({
 });
 export type ImapSettingsInput = z.infer<typeof ImapSettingsSchema>;
 
-export const EmailReviewConfirmSchema = z.object({ job_id: z.string().uuid().optional() });
+export const EmailReviewConfirmSchema = z.object({ job_id: z.string().uuid().optional(), action: z.enum(['none', 'rejection', 'interview']).optional() });

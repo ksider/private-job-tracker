@@ -2,8 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { JobDatabase } from '../src/db/database.js';
 import { matchEmailToJob } from '../src/email/matching.js';
+import { extractEmailText } from '../src/email/body.js';
 
 describe('email sync foundations', () => {
+  it('falls back to sanitized HTML when the plain MIME part is a placeholder', () => {
+    const extracted = extractEmailText('This is a multi-part message in MIME format.', '<html><head><style>p { display: none }</style><script>alert(1)</script></head><body><img width="1" height="1" src="https://tracker.example/pixel"><p>Unfortunately, we will not continue with your application.</p></body></html>');
+    expect(extracted).toEqual({ source: 'html_fallback', text: 'Unfortunately, we will not continue with your application.' });
+  });
+  it('marks a message with neither usable MIME body as missing', () => {
+    expect(extractEmailText('', '<html><head><script>track()</script></head><body><img width="1" height="1"></body></html>')).toEqual({ source: 'missing', text: '' });
+  });
   it('keeps an IMAP password encrypted and out of the settings response', async () => {
     const app = buildApp({ databasePath: ':memory:', apiToken: 'token', aiSecretsKey: '0123456789abcdef' });
     const saved = await app.inject({ method: 'PUT', url: '/api/settings/imap', payload: { host: 'imap.example.test', port: 993, tls_mode: 'tls', username: 'user@example.test', password: 'app-password', interview_mailbox: 'Jobs/Interviews', rejection_mailbox: 'Jobs/Rejections', enabled: false, allow_ai_email_text: false } });
@@ -51,6 +59,17 @@ describe('email sync foundations', () => {
     const email = db.saveEmail({ uid_validity: '7', imap_uid: 46, received_at: now, body_text: 'Thank you for applying.', body_hash: 'confirmation', category: 'application_confirmation', classification_json: '{}', proposed_job_id: imported.jobId, match_status: 'exact', review_status: 'pending_review', unresolved_reason: null, initial_import: 0 });
     db.confirmEmail(email.id); expect(db.email(email.id)).toMatchObject({ review_status: 'applied', reversible_effect: 1 });
     db.revertEmailEffect(email.id); expect(db.email(email.id)).toMatchObject({ review_status: 'pending_review', unresolved_reason: 'reverted_action', reversible_effect: 0 }); expect(db.get(imported.jobId)).toMatchObject({ status: 'saved' });
+    db.db.close();
+  });
+  it('lets a reviewer override the AI category with rejection, interview, or no status change', () => {
+    const db = new JobDatabase(':memory:'); const now = '2026-10-22T12:00:00.000Z'; const raw = { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: now };
+    const rejected = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/manual-rejection', title: 'Role', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, raw);
+    const interviewed = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/manual-interview', title: 'Role', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, raw);
+    const untouched = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/manual-none', title: 'Role', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, raw);
+    const makeEmail = (uid: number) => db.saveEmail({ uid_validity: 'manual', imap_uid: uid, received_at: now, body_text: 'A message', body_hash: `manual-${uid}`, category: 'other', classification_json: '{}', proposed_job_id: null, match_status: 'no_match', review_status: 'pending_review', unresolved_reason: null, initial_import: 0 });
+    const rejection = makeEmail(1); db.confirmEmail(rejection.id, rejected.jobId, 'rejection'); expect(db.get(rejected.jobId)).toMatchObject({ status: 'archived', result_outcome: 'rejected' });
+    const interview = makeEmail(2); db.confirmInterview(interview.id, interviewed.jobId); expect(db.get(interviewed.jobId)).toMatchObject({ status: 'interview' });
+    const none = makeEmail(3); db.confirmEmail(none.id, untouched.jobId, 'none'); expect(db.get(untouched.jobId)).toMatchObject({ status: 'saved' }); expect(db.email(none.id)).toMatchObject({ review_action: 'none', review_status: 'applied' });
     db.db.close();
   });
   it('cancels a wrongly matched interview and can confirm it for another vacancy', () => {
