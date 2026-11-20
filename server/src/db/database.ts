@@ -7,7 +7,7 @@ import { dayInTimeZone, utcRangeForLocalDays } from '../analytics/dates.js';
 export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: string; title?: string; company?: string; location?: string; workplaceType?: string; employmentType?: string; descriptionHtml?: string; descriptionText?: string; easyApply?: boolean; warnings: string[]; parseStatus: 'parsed' | 'partial' | 'parse_failed'; parserVersion: string };
 export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; posting_language_code: string | null; geo_source: 'ai' | 'manual' | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; cover_letter_text: string | null; cover_letter_model: string | null; cover_letter_updated_at: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; last_activity_at: string; parse_status: string; last_event_at: string; stage_started_at: string };
 export type ApplicationEffectivenessRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; result_outcome: JobRow['result_outcome']; applied_at: string; response_at: string | null; hr_response_at: string | null; ai_classification: MatchClassification | null; tags: string[] };
-export type ApplicationSankeyRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; posting_language_code: string | null; ai_classification: MatchClassification | null; result_outcome: JobRow['result_outcome']; applied_at: string; reached_hr: number; reached_technical: number; reached_final: number; reached_follow_up: number; tags: Array<{ id: string; name: string; color: string }> };
+export type ApplicationSankeyRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; geo_city: string | null; location: string | null; posting_language_code: string | null; ai_classification: MatchClassification | null; result_outcome: JobRow['result_outcome']; applied_at: string; events: Array<Pick<JobEventRow, 'type' | 'occurred_at' | 'created_at'>>; tags: Array<{ id: string; name: string; color: string }> };
 export type CohortApplicationRow = { id: string; applied_at: string; application_date_source: 'applied_event' | 'created_at'; first_response_event_at: string | null; first_response_email_at: string | null; first_hr_event_at: string | null; first_hr_email_at: string | null; has_undated_hr_progression: number };
 export type JobEventRow = { id: string; job_id: string; type: JobEventType; occurred_at: string; note: string; created_at: string };
 export type InterviewAppointmentStatus = 'proposed' | 'confirmed' | 'cancelled';
@@ -251,13 +251,15 @@ export class JobDatabase {
     this.db.prepare('INSERT INTO snapshots (id,job_id,source,source_url,content_type,page_title,raw_html,raw_text,collector_version,parser_version,parse_status,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, parsed.source, parsed.sourceUrl, 'job', raw.pageTitle ?? null, raw.html, raw.text, raw.collectorVersion, parsed.parserVersion, parsed.parseStatus, raw.capturedAt, now);
     return { jobId, action };
   }
-  list(filters: { search?: string; status?: string; source?: string; company?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; order?: string; archive?: string; inactive?: string }) {
+  list(filters: { search?: string; status?: string; source?: string; company?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; job_id?: string | string[]; order?: string; archive?: string; inactive?: string }) {
     const where: string[] = []; const values: unknown[] = [];
     if (filters.search) { where.push('(title LIKE ? OR company LIKE ?)'); values.push(`%${filters.search}%`, `%${filters.search}%`); }
     if (filters.status) { where.push('status = ?'); values.push(filters.status); }
     if (filters.source) { where.push('source = ?'); values.push(filters.source); }
     if (filters.company) { where.push("TRIM(LOWER(COALESCE(company, ''))) = TRIM(LOWER(?))"); values.push(filters.company); }
     if (filters.tag) { where.push('EXISTS (SELECT 1 FROM job_tags WHERE job_tags.job_id=jobs.id AND job_tags.tag_id=?)'); values.push(filters.tag); }
+    const jobIds = [...new Set((Array.isArray(filters.job_id) ? filters.job_id : filters.job_id ? [filters.job_id] : []).map(id => id.trim()).filter(Boolean))];
+    if (jobIds.length) { where.push(`jobs.id IN (${jobIds.map(() => '?').join(',')})`); values.push(...jobIds); }
     const matches = [...new Set((Array.isArray(filters.match) ? filters.match : filters.match ? [filters.match] : []).map(match => match.trim()).filter(Boolean))];
     if (matches.length) { const alternatives: string[] = []; const classifications = matches.filter(match => match !== 'not_analyzed'); if (classifications.length) { alternatives.push(`(SELECT classification FROM job_match_analyses WHERE job_match_analyses.job_id=jobs.id AND job_match_analyses.status='completed' ORDER BY completed_at DESC LIMIT 1) IN (${classifications.map(() => '?').join(',')})`); values.push(...classifications); } if (matches.includes('not_analyzed')) alternatives.push("NOT EXISTS (SELECT 1 FROM job_match_analyses WHERE job_match_analyses.job_id=jobs.id AND job_match_analyses.status='completed')"); where.push(`(${alternatives.join(' OR ')})`); }
     const countries = [...new Set((Array.isArray(filters.country) ? filters.country : filters.country ? [filters.country] : []).map(country => country.trim()).filter(Boolean))];
@@ -274,7 +276,8 @@ export class JobDatabase {
       if (codes.length) { alternatives.push(`LOWER(posting_language_code) IN (${codes.map(() => '?').join(',')})`); values.push(...codes); }
       where.push(`(${alternatives.join(' OR ')})`);
     }
-    if (filters.archive === 'only') where.push("status = 'archived'");
+    if (jobIds.length && filters.archive === 'all') { /* A Sankey selection can contain active and archived applications. */ }
+    else if (filters.archive === 'only') where.push("status = 'archived'");
     else {
       // Inactive is a derived display state, never an archival state.  The
       // email matcher requests `archive=all` so it keeps seeing these jobs.
@@ -418,18 +421,17 @@ export class JobDatabase {
       WHERE (jobs.status IN ('sent', 'interview', 'result') OR jobs.result_outcome IS NOT NULL
         OR (jobs.status='archived' AND EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up'))))
         AND NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
-    ) SELECT jobs.id, jobs.source, jobs.geo_country_code, jobs.geo_country, jobs.posting_language_code, (SELECT classification FROM job_match_analyses WHERE job_id=jobs.id AND status='completed' ORDER BY completed_at DESC LIMIT 1) AS ai_classification, CASE WHEN jobs.result_outcome IS NOT NULL THEN jobs.result_outcome WHEN jobs.status='archived' THEN 'rejected' ELSE NULL END AS result_outcome, applications.applied_at,
-      CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='hr_screening' AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_hr,
-      CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='interview' AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_technical,
-      CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='final_interview' AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_final,
-      CASE WHEN EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='follow_up' AND occurred_at >= applications.applied_at) THEN 1 ELSE 0 END AS reached_follow_up
-      FROM jobs JOIN applications ON applications.job_id=jobs.id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`).all(...values) as Array<Omit<ApplicationSankeyRow, 'tags'>>;
+    ) SELECT jobs.id, jobs.source, jobs.geo_country_code, jobs.geo_country, jobs.geo_city, jobs.location, jobs.posting_language_code, (SELECT classification FROM job_match_analyses WHERE job_id=jobs.id AND status='completed' ORDER BY completed_at DESC LIMIT 1) AS ai_classification, CASE WHEN jobs.result_outcome IS NOT NULL THEN jobs.result_outcome WHEN jobs.status='archived' THEN 'rejected' ELSE NULL END AS result_outcome, applications.applied_at
+      FROM jobs JOIN applications ON applications.job_id=jobs.id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`).all(...values) as Array<Omit<ApplicationSankeyRow, 'tags' | 'events'>>;
     const tagsByJob = new Map<string, Array<{ id: string; name: string; color: string }>>();
+    const eventsByJob = new Map<string, Array<Pick<JobEventRow, 'type' | 'occurred_at' | 'created_at'>>>();
     if (rows.length) {
       const tagRows = this.db.prepare(`SELECT job_tags.job_id, tags.id, tags.name, tags.color FROM job_tags JOIN tags ON tags.id=job_tags.tag_id WHERE job_tags.job_id IN (${rows.map(() => '?').join(',')})`).all(...rows.map(row => row.id)) as Array<{ job_id: string; id: string; name: string; color: string }>;
       for (const tag of tagRows) tagsByJob.set(tag.job_id, [...(tagsByJob.get(tag.job_id) ?? []), { id: tag.id, name: tag.name, color: tag.color }]);
+      const eventRows = this.db.prepare(`SELECT job_id, type, occurred_at, created_at FROM job_events WHERE job_id IN (${rows.map(() => '?').join(',')}) AND type IN ('hr_screening','interview','final_interview','follow_up','result','rejection_received') ORDER BY job_id, occurred_at, created_at`).all(...rows.map(row => row.id)) as Array<Pick<JobEventRow, 'job_id' | 'type' | 'occurred_at' | 'created_at'>>;
+      for (const event of eventRows) eventsByJob.set(event.job_id, [...(eventsByJob.get(event.job_id) ?? []), { type: event.type, occurred_at: event.occurred_at, created_at: event.created_at }]);
     }
-    return rows.map(row => ({ ...row, tags: tagsByJob.get(row.id) ?? [] }));
+    return rows.map(row => ({ ...row, events: eventsByJob.get(row.id) ?? [], tags: tagsByJob.get(row.id) ?? [] }));
   }
   cohortApplications(from?: string, to?: string, timeZone = 'UTC') {
     const values: string[] = []; const where: string[] = [];
