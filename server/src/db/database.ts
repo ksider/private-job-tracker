@@ -5,7 +5,7 @@ import { calculateCohortAnalytics } from '../analytics/cohorts.js';
 import { dayInTimeZone, utcRangeForLocalDays } from '../analytics/dates.js';
 
 export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: string; title?: string; company?: string; location?: string; workplaceType?: string; employmentType?: string; descriptionHtml?: string; descriptionText?: string; easyApply?: boolean; warnings: string[]; parseStatus: 'parsed' | 'partial' | 'parse_failed'; parserVersion: string };
-export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; posting_language_code: string | null; geo_source: 'ai' | 'manual' | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; cover_letter_text: string | null; cover_letter_model: string | null; cover_letter_updated_at: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; last_activity_at: string; parse_status: string; last_event_at: string; stage_started_at: string };
+export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; posting_language_code: string | null; geo_source: 'ai' | 'manual' | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; cover_letter_text: string | null; cover_letter_model: string | null; cover_letter_updated_at: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; last_activity_at: string; parse_status: string; last_event_at: string; stage_started_at: string; is_inactive?: number };
 export type ApplicationEffectivenessRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; result_outcome: JobRow['result_outcome']; applied_at: string; response_at: string | null; hr_response_at: string | null; ai_classification: MatchClassification | null; tags: string[] };
 export type ApplicationSankeyRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; geo_city: string | null; location: string | null; posting_language_code: string | null; ai_classification: MatchClassification | null; result_outcome: JobRow['result_outcome']; applied_at: string; events: Array<Pick<JobEventRow, 'type' | 'occurred_at' | 'created_at'>>; tags: Array<{ id: string; name: string; color: string }> };
 export type CohortApplicationRow = { id: string; applied_at: string; application_date_source: 'applied_event' | 'created_at'; first_response_event_at: string | null; first_response_email_at: string | null; first_hr_event_at: string | null; first_hr_email_at: string | null; has_undated_hr_progression: number };
@@ -253,6 +253,7 @@ export class JobDatabase {
   }
   list(filters: { search?: string; status?: string; source?: string; company?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; job_id?: string | string[]; order?: string; archive?: string; inactive?: string }) {
     const where: string[] = []; const values: unknown[] = [];
+    const inactiveModifier = `-${this.displaySettings().inactive_after_days} days`;
     if (filters.search) { where.push('(title LIKE ? OR company LIKE ?)'); values.push(`%${filters.search}%`, `%${filters.search}%`); }
     if (filters.status) { where.push('status = ?'); values.push(filters.status); }
     if (filters.source) { where.push('source = ?'); values.push(filters.source); }
@@ -282,12 +283,18 @@ export class JobDatabase {
       // Inactive is a derived display state, never an archival state.  The
       // email matcher requests `archive=all` so it keeps seeing these jobs.
       where.push("status != 'archived'");
-      const inactiveModifier = `-${this.displaySettings().inactive_after_days} days`;
       if (filters.inactive === 'only') { where.push("julianday(last_activity_at) < julianday('now', ?)"); values.push(inactiveModifier); }
-      else if (filters.archive !== 'all') { where.push("julianday(last_activity_at) >= julianday('now', ?)"); values.push(inactiveModifier); }
+      else if (filters.archive !== 'all') {
+        // Once a process has reached an interview, inactivity is an overlay,
+        // not a reason to remove it from its current board stage.
+        where.push("(julianday(last_activity_at) >= julianday('now', ?) OR status IN ('interview', 'result'))");
+        values.push(inactiveModifier);
+      }
     }
     const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: 'jobs.last_activity_at DESC', company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: 'jobs.title COLLATE NOCASE ASC', waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
-    return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type IN (${hiringStageEventSql})), jobs.created_at) AS last_event_at,
+    return this.db.prepare(`SELECT jobs.*,
+      CASE WHEN jobs.status != 'archived' AND julianday(jobs.last_activity_at) < julianday('now', ?) THEN 1 ELSE 0 END AS is_inactive,
+      COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type IN (${hiringStageEventSql})), jobs.created_at) AS last_event_at,
       CASE jobs.status
         WHEN 'saved' THEN jobs.created_at
         WHEN 'sent' THEN COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type = 'applied'), jobs.updated_at, jobs.created_at)
@@ -295,7 +302,7 @@ export class JobDatabase {
         WHEN 'result' THEN COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type = 'result'), jobs.updated_at, jobs.created_at)
         ELSE COALESCE(jobs.updated_at, jobs.created_at)
       END AS stage_started_at
-      FROM jobs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`).all(...values) as JobRow[];
+      FROM jobs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`).all(inactiveModifier, ...values) as JobRow[];
   }
   search(query: string, limit = 12) {
     const term = query.trim();
