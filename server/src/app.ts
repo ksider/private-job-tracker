@@ -206,6 +206,11 @@ export function buildApp(config: AppConfig) {
     const { id, snapshotId } = request.params as { id: string; snapshotId: string }; if (!db.get(id)) return reply.code(404).send({ error: 'Job not found' });
     return db.snapshot(id, snapshotId) ?? reply.code(404).send({ error: 'Snapshot not found' });
   });
+  app.delete('/api/jobs/:id/snapshots/:snapshotId', async (request, reply) => {
+    const { id, snapshotId } = request.params as { id: string; snapshotId: string }; if (!db.get(id)) return reply.code(404).send({ error: 'Job not found' });
+    const result = db.deleteOldSnapshot(id, snapshotId); if (result === 'not_found') return reply.code(404).send({ error: 'Snapshot not found' }); if (result === 'latest') return reply.code(409).send({ error: 'Последний snapshot защищён. Сначала сохраните новую версию вакансии.' });
+    return { deleted: true, snapshots: db.snapshotSummaries(id) };
+  });
   app.patch('/api/jobs/:id', async (request, reply) => { const checked = JobPatchSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid job update', details: checked.error.flatten() }); const job = db.update((request.params as { id: string }).id, checked.data); return job ?? reply.code(404).send({ error: 'Job not found' }); });
   app.post('/api/jobs/:id/ai-location', async (request, reply) => {
     const checked = LocationNormalizeRequestSchema.safeParse(request.body ?? {}); if (!checked.success) return reply.code(400).send({ error: 'Invalid location normalization request', details: checked.error.flatten() });
