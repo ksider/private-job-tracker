@@ -26,9 +26,10 @@ async function collect(tabId: number): Promise<CollectorResult> {
       return path.reverse().reduce<Element | undefined>((node, index) => node?.children[index], snapshot);
     };
     const wrapFullPage = (sourceName: string, snapshot: HTMLElement) => `<section data-snapshot-section="${sourceName}-page">${snapshot.innerHTML}</section>`;
-    const copy = document.implementation.createHTMLDocument('snapshot'); let html = ''; let selectedTextLength = 0; const warnings: string[] = [];
+    const copy = document.implementation.createHTMLDocument('snapshot'); let html = ''; let selectedTextLength = 0; let shadowCapture = false; const warnings: string[] = [];
     const selection = window.getSelection();
-    selectedTextLength = selection?.toString().trim().length ?? 0;
+    const selectedText = selection?.toString().replace(/\s+/g, ' ').trim() ?? '';
+    selectedTextLength = selectedText.length;
     const hasSelection = Boolean(selection?.rangeCount && selectedTextLength);
     const successFactors = Boolean(select('.jobDisplayShell', '#job-company', '#job-location', '.jobdescription'));
     const workday = Boolean(select('[data-automation-id="jobPostingPage"]', '[data-automation-id="jobPostingHeader"]', '[data-automation-id="jobPostingDescription"]'));
@@ -39,7 +40,37 @@ async function collect(tabId: number): Promise<CollectorResult> {
     // Keep the page URL, but make the selected fragment a Generic snapshot.
     const source = hasSelection ? 'generic' : detectedSource;
     if (hasSelection && selection) {
-      const holder = document.createElement('div'); holder.append(selection.getRangeAt(0).cloneContents());
+      const range = selection.getRangeAt(0); const holder = document.createElement('div'); holder.append(range.cloneContents());
+      // getRangeAt() is not shadow-aware. Ask the composed selection for its real
+      // endpoints and flatten the containing open Web Component into ordinary DOM.
+      const shadowRoots: ShadowRoot[] = [];
+      const collectShadowRoots = (root: Document | ShadowRoot) => root.querySelectorAll('*').forEach(element => { if (element.shadowRoot) { shadowRoots.push(element.shadowRoot); collectShadowRoots(element.shadowRoot); } });
+      collectShadowRoots(document);
+      const composed = (selection as Selection & { getComposedRanges?: (options?: { shadowRoots?: ShadowRoot[] }) => StaticRange[] }).getComposedRanges?.({ shadowRoots })[0];
+      const outerShadowHost = (node: Node) => { let current = node; let host: Element | undefined; while (current.getRootNode() instanceof ShadowRoot) { const root = current.getRootNode() as ShadowRoot; host = root.host; current = root.host; } return host; };
+      const cloneRenderedNode = (node: Node): Node => {
+        if (node.nodeType !== Node.ELEMENT_NODE) return node.cloneNode(false);
+        const element = node as Element; const clone = element.cloneNode(false) as Element;
+        const slotNodes = element.tagName === 'SLOT' ? (element as HTMLSlotElement).assignedNodes({ flatten: true }) : [];
+        const children = slotNodes.length ? slotNodes : element.shadowRoot ? [...element.shadowRoot.childNodes] : [...element.childNodes];
+        if (element.shadowRoot) clone.setAttribute('data-snapshot-shadow-host', element.localName);
+        children.forEach(child => clone.append(cloneRenderedNode(child)));
+        return clone;
+      };
+      const shadowHosts = composed ? [outerShadowHost(composed.startContainer), outerShadowHost(composed.endContainer)].filter((host): host is Element => Boolean(host)) : [];
+      const uniqueShadowHosts = shadowHosts.filter((host, index) => shadowHosts.indexOf(host) === index);
+      if (uniqueShadowHosts.length) {
+        holder.replaceChildren(...uniqueShadowHosts.map(host => cloneRenderedNode(host)));
+        shadowCapture = true;
+        warnings.push('Selection crossed Shadow DOM; the complete containing component DOM was saved.');
+      }
+      // Some component/shadow-DOM selections expose text through Selection but
+      // return an empty Range fragment. Preserve the closest DOM context before
+      // falling back to plain text after sanitization.
+      if (!holder.textContent?.trim()) {
+        const common = range.commonAncestorContainer; const context = common.nodeType === Node.ELEMENT_NODE ? common as Element : common.parentElement;
+        if (context) holder.append(context.cloneNode(true));
+      }
       html = `<section data-snapshot-section="generic-selection" data-snapshot-capture="selection">${holder.innerHTML}</section>`;
     } else if (source === 'linkedin') {
       const normalize = (value: string | null | undefined) => value?.replace(/\s+/g, ' ').trim() ?? '';
@@ -107,11 +138,20 @@ async function collect(tabId: number): Promise<CollectorResult> {
       const main = select('main', 'article'); html = main?.outerHTML ?? ''; if (!html) warnings.push('Select the relevant job text, or use a page with main/article.');
     }
     copy.body.innerHTML = html;
-    copy.querySelectorAll('script,iframe,form,input,button,textarea,select,video,audio,img,link,style,object,embed,meta').forEach(element => element.remove());
+    // A selected vacancy can be wrapped in a form. Remove form behavior while
+    // retaining its static descendants; active controls are removed separately.
+    copy.querySelectorAll('form').forEach(form => form.replaceWith(...form.childNodes));
+    copy.querySelectorAll('script,iframe,input,button,textarea,select,video,audio,img,link,style,object,embed,meta').forEach(element => element.remove());
     copy.querySelectorAll('*').forEach(element => [...element.attributes].forEach(attribute => { if (attribute.name.startsWith('on') || ['src', 'srcset', 'action', 'formaction'].includes(attribute.name) || (attribute.name === 'href' && !/^(https?:|mailto:|#|\/)/.test(attribute.value))) element.removeAttribute(attribute.name); }));
+    if (hasSelection && selectedText && !copy.body.textContent?.trim()) {
+      const fallback = copy.createElement('p'); fallback.setAttribute('data-snapshot-section', 'selection-text-fallback'); fallback.textContent = selectedText;
+      copy.querySelector('[data-snapshot-capture="selection"]')?.append(fallback);
+    }
     const clean = copy.body.innerHTML.slice(0, 5_000_000);
+    const serializedText = copy.body.textContent?.replace(/\s+/g, ' ').trim() || '';
+    const snapshotText = hasSelection && !shadowCapture ? selectedText : serializedText;
     const easyApply = source === 'linkedin' && copy.querySelector('[data-snapshot-section="easy-apply"]') !== null;
-    return { capture: { snapshot: { schema_version: 1, source, content_type: 'job', url: location.href, page_title: document.title, captured_at: new Date().toISOString(), snapshot: { format: 'html', html: clean, text: copy.body.textContent?.replace(/\s+/g, ' ').trim() || null }, metadata: { collector_version: hasSelection ? '1.5.0' : source === 'linkedin' ? '1.4.0' : '1.3.0', capture_mode: hasSelection ? 'selection' : 'page', detected_source: hasSelection ? detectedSource : undefined, easy_apply: easyApply } }, warnings, preview: (copy.body.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 300) }, selectedTextLength };
+    return { capture: { snapshot: { schema_version: 1, source, content_type: 'job', url: location.href, page_title: document.title, captured_at: new Date().toISOString(), snapshot: { format: 'html', html: clean, text: snapshotText || null }, metadata: { collector_version: hasSelection ? '1.7.0' : source === 'linkedin' ? '1.4.0' : '1.3.0', capture_mode: hasSelection ? 'selection' : 'page', detected_source: hasSelection ? detectedSource : undefined, easy_apply: easyApply } }, warnings, preview: snapshotText.slice(0, 300) }, selectedTextLength };
   }, args: [collectorSource] });
   const captures = frames.flatMap(frame => frame.result ? [frame.result as FrameCapture] : []);
   const selected = captures.filter(item => item.selectedTextLength > 0).sort((left, right) => right.selectedTextLength - left.selectedTextLength)[0];

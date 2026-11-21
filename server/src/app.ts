@@ -177,7 +177,9 @@ export function buildApp(config: AppConfig) {
     // The marker is embedded in the sanitized snapshot, so the same decision also
     // survives a later manual reparse.
     const genericSelection = snapshot.metadata.capture_mode === 'selection' || /data-snapshot-capture\s*=\s*(["'])selection\1/i.test(sanitized);
-    const probe = { ...snapshot, source: genericSelection ? 'generic' : snapshot.source, snapshot: { ...snapshot.snapshot, html: sanitized } }; const parser = registry.find(probe, { forceGeneric: genericSelection }); const easyApplyMarker = parser.source === 'linkedin' && (snapshot.metadata.easy_apply === true || hasLinkedInEasyApplySignal(snapshot.snapshot.html)) ? '<span data-snapshot-section="easy-apply">Easy Apply</span>' : ''; const clean = { ...probe, snapshot: { ...probe.snapshot, html: `${sanitized}${easyApplyMarker}` } }; const parsed = parser.parse(clean); const result = db.import(parsed, { html: clean.snapshot.html, text: snapshot.snapshot.text ?? null, collectorVersion: snapshot.metadata.collector_version, capturedAt: snapshot.captured_at, pageTitle: snapshot.page_title });
+    const readableHtml = sanitized.replace(/<br\s*\/?>/gi, ' ').replace(/<\/(?:h[1-6]|p|li|tr|td|th|section|article|div)>/gi, ' '); const htmlText = load(readableHtml).text().replace(/\s+/g, ' ').trim(); const snapshotText = (snapshot.snapshot.text?.replace(/\s+/g, ' ').trim() || htmlText).slice(0, 500_000) || null;
+    if (genericSelection && !snapshotText) return reply.code(400).send({ error: 'Selected snapshot contains no readable DOM or text. Select the vacancy text and save it again.' });
+    const probe = { ...snapshot, source: genericSelection ? 'generic' : snapshot.source, snapshot: { ...snapshot.snapshot, html: sanitized, text: snapshotText } }; const parser = registry.find(probe, { forceGeneric: genericSelection }); const easyApplyMarker = parser.source === 'linkedin' && (snapshot.metadata.easy_apply === true || hasLinkedInEasyApplySignal(snapshot.snapshot.html)) ? '<span data-snapshot-section="easy-apply">Easy Apply</span>' : ''; const clean = { ...probe, snapshot: { ...probe.snapshot, html: `${sanitized}${easyApplyMarker}` } }; const parsed = parser.parse(clean); const result = db.import(parsed, { html: clean.snapshot.html, text: snapshotText, collectorVersion: snapshot.metadata.collector_version, capturedAt: snapshot.captured_at, pageTitle: snapshot.page_title });
     if (parsed.source === 'linkedin' && parsed.easyApply) assignEasyApplyTag(result.jobId);
     if (result.action === 'created') void runImportAutomation(result.jobId);
     return { success: true, job_id: result.jobId, action: result.action, parser: parser.source, warnings: parsed.warnings };
@@ -195,6 +197,15 @@ export function buildApp(config: AppConfig) {
   app.get('/api/jobs/countries', async () => db.countryFilters());
   app.get('/api/jobs/languages', async () => db.languageFilters());
   app.get('/api/jobs/:id', async (request, reply) => { const id = (request.params as { id: string }).id; const job = db.get(id); const profile = await profiles.load().catch(() => undefined); return job ? { ...jobView(job), tags: db.tagsForJob(id), description_html: safeDescriptionHtml(job.description_html), events: db.events(id), appointments: db.appointments(id), ai_match: analysisView(db.latestAnalysis(id), profile, job.description_text) } : reply.code(404).send({ error: 'Job not found' }); });
+  app.get('/api/jobs/:id/technical', async (request, reply) => {
+    const id = (request.params as { id: string }).id; const job = db.get(id); if (!job) return reply.code(404).send({ error: 'Job not found' });
+    const technicalJob = { id: job.id, source: job.source, source_job_id: job.source_job_id, source_url: job.source_url, parse_status: job.parse_status, status: job.status, interview_stage: job.interview_stage, application_id: job.application_id, posting_language_code: job.posting_language_code, geo_source: job.geo_source, captured_at: job.captured_at, created_at: job.created_at, updated_at: job.updated_at, last_activity_at: job.last_activity_at };
+    return { job: technicalJob, snapshots: db.snapshotSummaries(id) };
+  });
+  app.get('/api/jobs/:id/snapshots/:snapshotId', async (request, reply) => {
+    const { id, snapshotId } = request.params as { id: string; snapshotId: string }; if (!db.get(id)) return reply.code(404).send({ error: 'Job not found' });
+    return db.snapshot(id, snapshotId) ?? reply.code(404).send({ error: 'Snapshot not found' });
+  });
   app.patch('/api/jobs/:id', async (request, reply) => { const checked = JobPatchSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid job update', details: checked.error.flatten() }); const job = db.update((request.params as { id: string }).id, checked.data); return job ?? reply.code(404).send({ error: 'Job not found' }); });
   app.post('/api/jobs/:id/ai-location', async (request, reply) => {
     const checked = LocationNormalizeRequestSchema.safeParse(request.body ?? {}); if (!checked.success) return reply.code(400).send({ error: 'Invalid location normalization request', details: checked.error.flatten() });
