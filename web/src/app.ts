@@ -530,10 +530,10 @@ async function openAiSettings() { ensureAiProfilePanel(); await loadAiSettings()
 function aiProviderPayload(form: HTMLFormElement) { const providerType = form.querySelector<HTMLSelectElement>('#ai-provider-type')!.value; return { provider_type: providerType, display_name: form.querySelector<HTMLInputElement>('#ai-display-name')!.value.trim(), base_url: providerType === 'openrouter' ? undefined : form.querySelector<HTMLInputElement>('#ai-base-url')!.value.trim() || undefined, api_key: form.querySelector<HTMLInputElement>('#ai-api-key')!.value, requests_per_minute: Number(form.querySelector<HTMLInputElement>('#ai-requests-rpm')!.value), tokens_per_minute: Number(form.querySelector<HTMLInputElement>('#ai-tokens-tpm')!.value), enabled: form.querySelector<HTMLInputElement>('#ai-enabled')!.checked }; }
 function aiModelPayload(form: HTMLFormElement) { return { model: form.querySelector<HTMLInputElement>('#ai-model')!.value.trim(), temperature: Number(form.querySelector<HTMLInputElement>('#ai-temperature')!.value), max_output_tokens: Number(form.querySelector<HTMLInputElement>('#ai-max-output-tokens')!.value), timeout_ms: Number(form.querySelector<HTMLInputElement>('#ai-timeout-seconds')!.value) * 1000, enabled: form.querySelector<HTMLInputElement>('#ai-enabled')!.checked }; }
 async function saveAiConnection({ closeForm = false, notify = false }: { closeForm?: boolean; notify?: boolean } = {}) { const form = $('#ai-connection-form') as HTMLFormElement; const mode = form.dataset.aiFormMode as 'provider' | 'model'; const id = form.dataset.aiEntityId ?? ''; const parentId = form.dataset.aiProviderId ?? ''; const url = mode === 'provider' ? id ? `/api/ai/provider-profiles/${id}` : '/api/ai/provider-profiles' : id ? `/api/ai/models/${id}` : `/api/ai/provider-profiles/${parentId}/models`; const saved = await api(url, { method: id ? 'PATCH' : 'POST', body: JSON.stringify(mode === 'provider' ? aiProviderPayload(form) : aiModelPayload(form)) }) as AiProviderProfile | AiConnection; form.dataset.aiEntityId = saved.id; await loadAiSettings(); if (closeForm) showAiList(); if (notify) show(mode === 'provider' ? 'AI-провайдер сохранён.' : 'AI-модель сохранена.'); return saved; }
-function aiConnectionCanAutoSave(form: HTMLFormElement) { if (!form.checkValidity()) return false; if (form.dataset.aiFormMode === 'model') return Boolean(form.dataset.aiProviderId); const id = form.dataset.aiEntityId; const provider = form.querySelector<HTMLSelectElement>('#ai-provider-type')!.value; const key = form.querySelector<HTMLInputElement>('#ai-api-key')!.value.trim(); return Boolean(id || provider === 'ollama' || key); }
+function aiConnectionCanAutoSave(form: HTMLFormElement) { if (!form.dataset.aiEntityId || !form.checkValidity()) return false; if (form.dataset.aiFormMode === 'model') return Boolean(form.dataset.aiProviderId); return true; }
 function bindAiConnectionAutoSave(form: HTMLFormElement) {
   const message = () => form.querySelector<HTMLElement>('#ai-form-message');
-  const markDirty = () => { aiFormDirty = true; const target = message(); if (target) { target.classList.remove('text-red-700', 'text-emerald-700'); target.classList.add('text-gray-500'); target.textContent = 'Будет сохранено при переходе к другому полю.'; } };
+  const markDirty = () => { aiFormDirty = true; const target = message(); if (target) { target.classList.remove('text-red-700', 'text-emerald-700'); target.classList.add('text-gray-500'); target.textContent = form.dataset.aiEntityId ? 'Будет сохранено при переходе к другому полю.' : 'Для добавления нажмите «Добавить».'; } };
   const save = async () => {
     if (!aiFormDirty) return;
     if (aiFormSaving) { aiFormSaveQueued = true; return; }
@@ -556,7 +556,18 @@ function bindAiConnectionAutoSave(form: HTMLFormElement) {
   form.oninput = markDirty;
   form.onchange = markDirty;
   form.onfocusout = () => void save();
-  form.onsubmit = event => { event.preventDefault(); markDirty(); void save(); };
+  form.onsubmit = event => {
+    event.preventDefault();
+    if (form.dataset.aiEntityId || !form.reportValidity()) return;
+    const submit = form.querySelector<HTMLButtonElement>('[data-ai-create]');
+    if (submit) { submit.disabled = true; submit.textContent = 'Добавляем…'; }
+    const target = message();
+    if (target) { target.classList.remove('text-red-700', 'text-gray-500'); target.classList.add('text-emerald-700'); target.textContent = 'Сохраняем…'; }
+    void saveAiConnection({ closeForm: true, notify: true }).then(() => { aiFormDirty = false; }).catch(error => {
+      if (target) { target.classList.remove('text-gray-500', 'text-emerald-700'); target.classList.add('text-red-700'); target.textContent = error instanceof Error ? error.message : 'Не удалось сохранить'; }
+      if (submit) { submit.disabled = false; submit.textContent = 'Добавить'; }
+    });
+  };
 }
 async function deleteAiConnection(id: string) { if (!id || !confirm('Удалить эту AI-модель?')) return; await api(`/api/ai/models/${id}`, { method: 'DELETE' }); await loadAiSettings(); show('AI-модель удалена.'); }
 async function deleteCurrentAiEntity() { const form = $('#ai-connection-form') as HTMLFormElement; const id = form.dataset.aiEntityId; if (!id) return; if (form.dataset.aiFormMode === 'provider') { const provider = aiProviderProfiles.find(item => item.id === id); if (!confirm(`Удалить провайдера «${provider?.display_name ?? ''}» и все его модели?`)) return; await api(`/api/ai/provider-profiles/${id}`, { method: 'DELETE' }); show('AI-провайдер удалён.'); } else { if (!confirm('Удалить эту AI-модель?')) return; await api(`/api/ai/models/${id}`, { method: 'DELETE' }); show('AI-модель удалена.'); } await loadAiSettings(); showAiList(); }
@@ -1032,7 +1043,8 @@ function rebuildAiProviderForm(form: HTMLFormElement, options: { mode: 'provider
         <label class="flex items-center gap-2 rounded-xl border border-gray-200 p-4 text-sm"><input id="ai-enabled" type="checkbox" ${model?.model_enabled === false ? '' : 'checked'} class="h-4 w-4 rounded border-gray-300 text-blue-700"> Включить модель</label>
       </div>`;
   }
-  form.insertAdjacentHTML('beforeend', `<p id="ai-form-message" class="mt-3 text-sm text-gray-500" aria-live="polite">${mode === 'provider' && provider?.api_key_configured ? 'Ключ сохранён; пустое поле не изменит его.' : 'Изменения сохраняются при переходе к другому полю.'}</p><div class="mt-5 flex items-center justify-between border-t border-gray-200 pt-4"><button id="ai-delete" type="button" class="${form.dataset.aiEntityId ? '' : 'hidden'} text-sm font-medium text-red-700 hover:underline">Удалить ${mode === 'provider' ? 'провайдера' : 'модель'}</button><button id="ai-cancel" type="button" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50">Закрыть</button></div>`);
+  const isNew = !form.dataset.aiEntityId;
+  form.insertAdjacentHTML('beforeend', `<p id="ai-form-message" class="mt-3 text-sm text-gray-500" aria-live="polite">${mode === 'provider' && provider?.api_key_configured ? 'Ключ сохранён; пустое поле не изменит его.' : isNew ? `Заполните параметры и нажмите «Добавить».` : 'Изменения сохраняются при переходе к другому полю.'}</p><div class="mt-5 flex items-center justify-between border-t border-gray-200 pt-4"><button id="ai-delete" type="button" class="${isNew ? 'hidden' : ''} text-sm font-medium text-red-700 hover:underline">Удалить ${mode === 'provider' ? 'провайдера' : 'модель'}</button><div class="ml-auto flex items-center gap-2"><button id="ai-cancel" type="button" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50">${isNew ? 'Отмена' : 'Закрыть'}</button>${isNew ? '<button type="submit" data-ai-create class="rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:cursor-wait disabled:opacity-70">Добавить</button>' : ''}</div></div>`);
   form.querySelector<HTMLSelectElement>('#ai-provider-type')?.addEventListener('change', syncAiProviderFields);
   form.querySelector<HTMLButtonElement>('#ai-form-close')!.onclick = closeAiDialog;
   form.querySelector<HTMLButtonElement>('#ai-cancel')!.onclick = closeAiDialog;
