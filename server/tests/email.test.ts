@@ -53,6 +53,20 @@ describe('email sync foundations', () => {
     db.revertEmailEffect(email.id); expect(db.get(imported.jobId)).toMatchObject({ status: 'saved', result_outcome: null }); expect(db.email(email.id)).toMatchObject({ review_status: 'pending_review', unresolved_reason: 'reverted_action', reversible_effect: 0 });
     db.confirmEmail(email.id); expect(db.get(imported.jobId)).toMatchObject({ status: 'archived', result_outcome: 'rejected' }); expect(db.email(email.id)).toMatchObject({ reversible_effect: 1 });
   });
+  it('returns an old sent vacancy to Ghost after reverting an email decision', () => {
+    const db = new JobDatabase(':memory:'); const old = '2020-01-01T00:00:00.000Z'; const now = '2026-10-22T12:00:00.000Z';
+    const imported = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/old-sent', title: 'Materials Engineer', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: old });
+    db.update(imported.jobId, { status: 'sent' });
+    db.db.prepare("UPDATE job_events SET occurred_at=? WHERE job_id=? AND type IN ('saved', 'applied', 'hr_screening', 'interview', 'final_interview', 'follow_up', 'result')").run(old, imported.jobId);
+    db.db.prepare('UPDATE jobs SET created_at=?, captured_at=?, last_activity_at=? WHERE id=?').run(old, old, old, imported.jobId);
+    const email = db.saveEmail({ uid_validity: '7', imap_uid: 48, received_at: now, body_text: 'Unfortunately, we will not continue.', body_hash: 'old-sent-rejection', category: 'rejection', classification_json: '{}', proposed_job_id: imported.jobId, match_status: 'exact', review_status: 'pending_review', unresolved_reason: null, initial_import: 0 });
+    db.confirmEmail(email.id); expect(db.get(imported.jobId)).toMatchObject({ status: 'archived' });
+    db.revertEmailEffect(email.id);
+    expect(db.get(imported.jobId)).toMatchObject({ status: 'sent', last_activity_at: old });
+    expect(db.list({})).toEqual([]);
+    expect(db.list({ inactive: 'only' })).toEqual([expect.objectContaining({ id: imported.jobId, status: 'sent', is_inactive: 1 })]);
+    db.db.close();
+  });
   it('allows cancelling an applied email match even when it did not change the vacancy', () => {
     const db = new JobDatabase(':memory:'); const now = '2026-10-22T12:00:00.000Z';
     const imported = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/confirmation', title: 'Process Engineer', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: now });

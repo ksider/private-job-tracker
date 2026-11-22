@@ -36,6 +36,7 @@ export const ParserSourcePresets = ['linkedin', 'greenhouse', 'smartrecruiters',
 const hiringStageEventTypes = ['saved', 'applied', 'hr_screening', 'interview', 'final_interview', 'follow_up', 'result'] as const satisfies readonly JobEventType[];
 const hiringStageEventSet = new Set<JobEventType>(hiringStageEventTypes);
 const hiringStageEventSql = hiringStageEventTypes.map(type => `'${type}'`).join(', ');
+const hiringActivitySql = `COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN (${hiringStageEventSql})), jobs.created_at)`;
 
 export class JobDatabase {
   readonly db: Database.Database;
@@ -285,18 +286,18 @@ export class JobDatabase {
       // Inactive is a derived display state, never an archival state.  The
       // email matcher requests `archive=all` so it keeps seeing these jobs.
       where.push("status != 'archived'");
-      if (filters.inactive === 'only') { where.push("julianday(last_activity_at) < julianday('now', ?)"); values.push(inactiveModifier); }
+      if (filters.inactive === 'only') { where.push(`julianday(${hiringActivitySql}) < julianday('now', ?)`); values.push(inactiveModifier); }
       else if (filters.archive !== 'all') {
         // Once a process has reached an interview, inactivity is an overlay,
         // not a reason to remove it from its current board stage.
-        where.push("(julianday(last_activity_at) >= julianday('now', ?) OR status IN ('interview', 'result'))");
+        where.push(`(julianday(${hiringActivitySql}) >= julianday('now', ?) OR status IN ('interview', 'result'))`);
         values.push(inactiveModifier);
       }
     }
-    const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: 'jobs.last_activity_at DESC', company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: 'jobs.title COLLATE NOCASE ASC', waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
+    const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: `${hiringActivitySql} DESC`, company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: 'jobs.title COLLATE NOCASE ASC', waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
     return this.db.prepare(`SELECT jobs.*,
-      CASE WHEN jobs.status != 'archived' AND julianday(jobs.last_activity_at) < julianday('now', ?) THEN 1 ELSE 0 END AS is_inactive,
-      COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type IN (${hiringStageEventSql})), jobs.created_at) AS last_event_at,
+      CASE WHEN jobs.status != 'archived' AND julianday(${hiringActivitySql}) < julianday('now', ?) THEN 1 ELSE 0 END AS is_inactive,
+      ${hiringActivitySql} AS last_event_at,
       CASE jobs.status
         WHEN 'saved' THEN jobs.created_at
         WHEN 'sent' THEN COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type = 'applied'), jobs.updated_at, jobs.created_at)
@@ -312,14 +313,14 @@ export class JobDatabase {
     const inactiveModifier = `-${this.displaySettings().inactive_after_days} days`;
     const cappedLimit = Math.max(1, Math.min(limit, 25));
     return this.db.prepare(`SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.status,
-      CASE WHEN jobs.status != 'archived' AND julianday(jobs.last_activity_at) < julianday('now', ?) THEN 1 ELSE 0 END AS is_inactive
+      CASE WHEN jobs.status != 'archived' AND julianday(${hiringActivitySql}) < julianday('now', ?) THEN 1 ELSE 0 END AS is_inactive
       FROM jobs
       WHERE instr(LOWER(COALESCE(jobs.title, '')), LOWER(?)) > 0
         OR instr(LOWER(COALESCE(jobs.company, '')), LOWER(?)) > 0
       ORDER BY
         CASE WHEN instr(LOWER(COALESCE(jobs.title, '')), LOWER(?)) > 0 THEN 0 ELSE 1 END,
-        CASE WHEN jobs.status = 'archived' THEN 2 WHEN julianday(jobs.last_activity_at) < julianday('now', ?) THEN 1 ELSE 0 END,
-        jobs.last_activity_at DESC
+        CASE WHEN jobs.status = 'archived' THEN 2 WHEN julianday(${hiringActivitySql}) < julianday('now', ?) THEN 1 ELSE 0 END,
+        ${hiringActivitySql} DESC
       LIMIT ?`).all(inactiveModifier, term, term, term, inactiveModifier, cappedLimit) as Array<Pick<JobRow, 'id' | 'title' | 'company' | 'location' | 'status'> & { is_inactive: number }>;
   }
   jobOptions() { return this.db.prepare("SELECT id, company, title FROM jobs WHERE status != 'archived' ORDER BY captured_at DESC").all() as Array<Pick<JobRow, 'id' | 'company' | 'title'>>; }
@@ -822,13 +823,17 @@ export class JobDatabase {
     const jobId = effect?.job_id ?? appointment?.job_id ?? email.proposed_job_id; const job = jobId ? this.get(jobId) : undefined;
     const canRestore = Boolean(effect && job && job.status === effect.next_status && job.result_outcome === effect.next_result_outcome && job.interview_stage === effect.next_interview_stage);
     const now = new Date().toISOString(); const transaction = this.db.transaction(() => {
-      if (effect && job && canRestore) this.db.prepare('UPDATE jobs SET status=?, result_outcome=?, interview_stage=?, archive_reason=NULL, archive_seen_at=NULL, updated_at=?, last_activity_at=MAX(COALESCE(last_activity_at, created_at), ?) WHERE id=?').run(effect.previous_status, effect.previous_result_outcome, effect.previous_interview_stage ?? (effect.previous_status === 'interview' ? 'interview' : null), now, now, job.id);
       this.db.prepare('DELETE FROM interview_appointments WHERE source_email_id=?').run(id);
       if (jobId) {
         const action = email.review_action ?? (email.category === 'rejection' ? 'rejection' : 'none'); const classificationEvent = action === 'rejection' ? 'rejection_received' : 'email_detected'; const classificationNote = action === 'rejection' ? 'Email review action: rejection' : action === 'interview' ? 'Email review action: interview' : 'Email review action: none';
         this.db.prepare('DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? AND note=? ORDER BY created_at DESC LIMIT 1)').run(jobId, classificationEvent, email.received_at, classificationNote);
         if (effect?.next_status === 'interview' && effect.next_interview_stage) { this.db.prepare("DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? AND note='Interview invitation confirmed from email' ORDER BY created_at DESC LIMIT 1)").run(jobId, effect.next_interview_stage, effect.applied_at); this.db.prepare("DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? AND note='Interview confirmed from email' ORDER BY created_at DESC LIMIT 1)").run(jobId, effect.next_interview_stage, effect.applied_at); }
         if (effect?.next_status === 'archived') this.db.prepare('DELETE FROM job_events WHERE id=(SELECT id FROM job_events WHERE job_id=? AND type=? AND occurred_at=? ORDER BY created_at DESC LIMIT 1)').run(jobId, 'email_status_changed', effect.applied_at);
+      }
+      if (effect && job && canRestore) {
+        const activity = this.db.prepare(`SELECT MAX(occurred_at) AS occurred_at FROM job_events WHERE job_id=? AND type IN (${hiringStageEventSql})`).get(job.id) as { occurred_at: string | null };
+        const lastActivityAt = [job.created_at, job.captured_at, activity.occurred_at].filter((value): value is string => Boolean(value)).sort().at(-1)!;
+        this.db.prepare('UPDATE jobs SET status=?, result_outcome=?, interview_stage=?, archive_reason=NULL, archive_seen_at=NULL, updated_at=?, last_activity_at=? WHERE id=?').run(effect.previous_status, effect.previous_result_outcome, effect.previous_interview_stage ?? (effect.previous_status === 'interview' ? 'interview' : null), now, lastActivityAt, job.id);
       }
       this.db.prepare('UPDATE email_effects SET reverted_at=? WHERE email_id=? AND reverted_at IS NULL').run(now, id);
       this.db.prepare("UPDATE email_records SET review_status='pending_review', review_action=NULL, unresolved_reason='reverted_action', updated_at=? WHERE id=?").run(now, id);
