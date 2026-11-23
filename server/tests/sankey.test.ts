@@ -111,7 +111,7 @@ describe('Sankey normalization and event paths', () => {
     expect(dataset.matrix[0]).toMatchObject({ hr_plus: 1 });
   });
 
-  it('builds mutually exclusive matrix buckets without losing rejected-after-interview conversions', () => {
+  it('keeps reached stages visible when an application was later rejected', () => {
     const dataset = buildSankeyDataset([
       application('waiting'),
       application('active', { events: [{ type: 'hr_screening', occurred_at: '2026-10-02T10:00:00.000Z', created_at: '2026-10-02T10:00:00.000Z' }] }),
@@ -123,11 +123,13 @@ describe('Sankey normalization and event paths', () => {
     ], options());
     expect(dataset.matrix).toEqual([expect.objectContaining({
       id: 'country:DE', applications: 4, hr_plus: 2, hr_plus_without_rejection: 1, rejected: 2, rejected_before_hr_plus: 1,
-      rejected_after_hr_plus: 1, other: 1, hr_plus_rate: 0.5,
+      rejected_after_hr_plus: 1, other: 1, hr_plus_rate: 0.5, hr_screening: 1, technical_interview: 1, final_interview: 0, offers: 0,
     })]);
     const group = dataset.matrix[0];
     expect(group.hr_plus_without_rejection + group.rejected + group.other).toBe(group.applications);
     expect(group.hr_plus_application_ids).toEqual(expect.arrayContaining(['active', 'rejected-after-hr']));
+    expect(group.hr_screening_application_ids).toEqual(['active']);
+    expect(group.technical_interview_application_ids).toEqual(['rejected-after-hr']);
     expect(group.hr_plus_without_rejection_application_ids).toEqual(['active']);
     expect(group.rejected_application_ids).toEqual(expect.arrayContaining(['rejected-early', 'rejected-after-hr']));
     expect(group.rejected_before_hr_plus_application_ids).toEqual(['rejected-early']);

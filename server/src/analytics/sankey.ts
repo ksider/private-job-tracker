@@ -52,6 +52,10 @@ export type SankeyMatrixGroup = {
   label: string;
   applications: number;
   hr_plus: number;
+  hr_screening: number;
+  technical_interview: number;
+  final_interview: number;
+  offers: number;
   hr_plus_without_rejection: number;
   rejected: number;
   rejected_before_hr_plus: number;
@@ -60,6 +64,10 @@ export type SankeyMatrixGroup = {
   hr_plus_rate: number;
   application_ids: string[];
   hr_plus_application_ids: string[];
+  hr_screening_application_ids: string[];
+  technical_interview_application_ids: string[];
+  final_interview_application_ids: string[];
+  offer_application_ids: string[];
   hr_plus_without_rejection_application_ids: string[];
   rejected_application_ids: string[];
   rejected_before_hr_plus_application_ids: string[];
@@ -174,7 +182,7 @@ export function buildSankeyDataset(allRows: SankeyApplication[], options: { dime
   );
   type NodeSeed = Omit<SankeyNode, 'value' | 'parent_value' | 'percentage' | 'application_ids'> & { ids: Set<string> };
   type LinkSeed = Omit<SankeyLink, 'value' | 'source_count' | 'destination_count' | 'conversion' | 'application_ids'> & { ids: Set<string> };
-  type MatrixSeed = { id: string; label: string; ids: Set<string>; hrPlusIds: Set<string>; rejectedBeforeHrPlusIds: Set<string>; rejectedAfterHrPlusIds: Set<string>; otherIds: Set<string> };
+  type MatrixSeed = { id: string; label: string; ids: Set<string>; hrPlusIds: Set<string>; hrScreeningIds: Set<string>; technicalInterviewIds: Set<string>; finalInterviewIds: Set<string>; offerIds: Set<string>; rejectedBeforeHrPlusIds: Set<string>; rejectedAfterHrPlusIds: Set<string>; otherIds: Set<string> };
   const nodeSeeds = new Map<string, NodeSeed>(); const linkSeeds = new Map<string, LinkSeed>(); const matrixSeeds = new Map<string, MatrixSeed>();
   const ensureNode = (id: string, label: string, kind: SankeyNode['kind'], depth: number, filterValue?: string, color?: string) => {
     if (!nodeSeeds.has(id)) nodeSeeds.set(id, { id, label, kind, depth, ids: new Set(), ...(filterValue ? { filter_value: filterValue } : {}), ...(color ? { color } : {}) });
@@ -228,8 +236,12 @@ export function buildSankeyDataset(allRows: SankeyApplication[], options: { dime
     for (const group of categoryGroups(row)) {
       const category = ensureNode(groupId(options.dimension, group.value), group.label, 'category', 0, group.value || undefined, group.color);
       category.ids.add(row.id); addLink(category.id, built.path[0], row.id); countedApplications += 1;
-      const matrix = matrixSeeds.get(category.id) ?? { id: category.id, label: group.label, ids: new Set<string>(), hrPlusIds: new Set<string>(), rejectedBeforeHrPlusIds: new Set<string>(), rejectedAfterHrPlusIds: new Set<string>(), otherIds: new Set<string>() };
+      const matrix = matrixSeeds.get(category.id) ?? { id: category.id, label: group.label, ids: new Set<string>(), hrPlusIds: new Set<string>(), hrScreeningIds: new Set<string>(), technicalInterviewIds: new Set<string>(), finalInterviewIds: new Set<string>(), offerIds: new Set<string>(), rejectedBeforeHrPlusIds: new Set<string>(), rejectedAfterHrPlusIds: new Set<string>(), otherIds: new Set<string>() };
       matrix.ids.add(row.id);
+      if (built.recordedStages.includes('stage:hr')) matrix.hrScreeningIds.add(row.id);
+      if (built.recordedStages.includes('stage:technical')) matrix.technicalInterviewIds.add(row.id);
+      if (built.recordedStages.includes('stage:final')) matrix.finalInterviewIds.add(row.id);
+      if (row.result_outcome === 'offer') matrix.offerIds.add(row.id);
       if (reachedHrPlus) { matrix.hrPlusIds.add(row.id); if (rejected) matrix.rejectedAfterHrPlusIds.add(row.id); }
       else if (rejected) matrix.rejectedBeforeHrPlusIds.add(row.id);
       else matrix.otherIds.add(row.id);
@@ -250,6 +262,10 @@ export function buildSankeyDataset(allRows: SankeyApplication[], options: { dime
       label: seed.label,
       applications: seed.ids.size,
       hr_plus: seed.hrPlusIds.size,
+      hr_screening: seed.hrScreeningIds.size,
+      technical_interview: seed.technicalInterviewIds.size,
+      final_interview: seed.finalInterviewIds.size,
+      offers: seed.offerIds.size,
       hr_plus_without_rejection: hrPlusWithoutRejectionIds.length,
       rejected: rejectedIds.length,
       rejected_before_hr_plus: seed.rejectedBeforeHrPlusIds.size,
@@ -258,6 +274,10 @@ export function buildSankeyDataset(allRows: SankeyApplication[], options: { dime
       hr_plus_rate: seed.ids.size ? seed.hrPlusIds.size / seed.ids.size : 0,
       application_ids: [...seed.ids],
       hr_plus_application_ids: [...seed.hrPlusIds],
+      hr_screening_application_ids: [...seed.hrScreeningIds],
+      technical_interview_application_ids: [...seed.technicalInterviewIds],
+      final_interview_application_ids: [...seed.finalInterviewIds],
+      offer_application_ids: [...seed.offerIds],
       hr_plus_without_rejection_application_ids: hrPlusWithoutRejectionIds,
       rejected_application_ids: rejectedIds,
       rejected_before_hr_plus_application_ids: [...seed.rejectedBeforeHrPlusIds],

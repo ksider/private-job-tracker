@@ -324,6 +324,7 @@ export class JobDatabase {
       LIMIT ?`).all(inactiveModifier, term, term, term, inactiveModifier, cappedLimit) as Array<Pick<JobRow, 'id' | 'title' | 'company' | 'location' | 'status'> & { is_inactive: number }>;
   }
   jobOptions() { return this.db.prepare("SELECT id, company, title FROM jobs WHERE status != 'archived' ORDER BY captured_at DESC").all() as Array<Pick<JobRow, 'id' | 'company' | 'title'>>; }
+  currentInterviewProcesses() { return this.db.prepare("SELECT id, interview_stage FROM jobs WHERE status='interview' ORDER BY last_activity_at DESC").all() as Array<Pick<JobRow, 'id' | 'interview_stage'>>; }
   countryFilters() { return this.db.prepare("SELECT geo_country AS name, geo_country_code AS code FROM jobs WHERE status != 'archived' GROUP BY geo_country, geo_country_code ORDER BY COALESCE(geo_country, '') COLLATE NOCASE ASC").all() as Array<{ name: string | null; code: string | null }>; }
   languageFilters() { return this.db.prepare("SELECT posting_language_code AS code FROM jobs WHERE status != 'archived' GROUP BY posting_language_code ORDER BY COALESCE(posting_language_code, '') COLLATE NOCASE ASC").all() as Array<{ code: string | null }>; }
   geographyBackfillCandidates(options: { includeArchived?: boolean; limit?: number } = {}) {
