@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job Tracker</title>
+<style>
+  :root{
+    --bg:#0d1117; --card:#161b22; --border:#30363d;
+    --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff;
+    --green:#3fb950; --yellow:#d29922; --red:#f85149; --purple:#bc8cff;
+    --clicked:#1f6feb22;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);padding:16px}
+  h1{font-size:20px;margin-bottom:4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px}
+  .drop{flex:1;min-width:250px;border:2px dashed var(--border);border-radius:8px;padding:14px;text-align:center;color:var(--muted);cursor:pointer;transition:.2s;font-size:14px}
+  .drop:hover,.drop.over{border-color:var(--accent);color:var(--accent);background:#1f6feb11}
+  select,button{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:14px;cursor:pointer}
+  select:hover,button:hover{border-color:var(--accent)}
+  .stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+  .chip{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:6px 14px;font-size:13px;color:var(--muted)}
+  .chip b{color:var(--text)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);font-size:13px;vertical-align:top}
+  th{background:#1c2128;color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:#1f2937}
+  tr.clicked td{background:var(--clicked)}
+  tr.clicked td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+  a{color:var(--accent);text-decoration:none;font-weight:600}
+  a:hover{text-decoration:underline}
+  .title{font-weight:600;font-size:14px}
+  .company{color:var(--muted);font-size:12px}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
+  .b-sent{background:#1f6feb33;color:var(--accent)}
+  .b-interview{background:#3fb95033;color:var(--green)}
+  .b-archived{background:#f8514933;color:var(--red)}
+  .stage{color:var(--purple);font-size:12px}
+  .date{color:var(--muted);font-size:12px;white-space:nowrap}
+  .clicked-mark{color:var(--green);font-size:11px;font-weight:600}
+  .empty{text-align:center;padding:40px;color:var(--muted)}
+  .tags{color:var(--muted);font-size:11px;margin-top:4px}
+</style>
+</head>
+<body>
+  <h1>📋 Job Tracker</h1>
+  <div class="sub">Кликни по ссылке — она пометится как «открыта сегодня». Отметки сохраняются в браузере.</div>
+
+  <div class="toolbar">
+    <div class="drop" id="drop">Перетащи сюда <b>Jobs.csv</b> или кликни для выбора</div>
+    <input type="file" id="file" accept=".csv" style="display:none">
+    <select id="filter">
+      <option value="all">Все статусы</option>
+      <option value="sent">Sent</option>
+      <option value="interview">Interview</option>
+      <option value="archived">Archived</option>
+    </select>
+    <button id="reset">Сбросить отметки сегодня</button>
+  </div>
+
+  <div class="stats" id="stats"></div>
+  <div id="content"><div class="empty">Загрузи CSV-файл, чтобы начать</div></div>
+
+<script>
+const LS_KEY='job_clicks';
+const LS_CSV='job_csv_data';
+let jobs=[];
+let clicks=JSON.parse(localStorage.getItem(LS_KEY)||'{}');
+
+function today(){return new Date().toISOString().slice(0,10)}
+
+function parseCSV(text){
+  const rows=[];let cur=[],field='',inQ=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQ){
+      if(c==='"'){ if(text[i+1]==='"'){field+='"';i++} else inQ=false }
+      else field+=c;
+    }else{
+      if(c==='"')inQ=true;
+      else if(c===','){cur.push(field);field=''}
+      else if(c==='\n'||c==='\r'){
+        if(c==='\r'&&text[i+1]==='\n')i++;
+        cur.push(field);field='';
+        if(cur.some(f=>f.trim()!==''))rows.push(cur);
+        cur=[];
+      }else field+=c;
+    }
+  }
+  cur.push(field);if(cur.some(f=>f.trim()!==''))rows.push(cur);
+  if(!rows.length)return[];
+  const header=rows[0].map(h=>h.trim().toLowerCase());
+  const idx=n=>header.indexOf(n);
+  const it=idx('title'),ic=idx('company'),il=idx('location'),iu=idx('source_url'),
+        is=idx('status'),ig=idx('interview_stage'),id=idx('created_at'),itag=idx('tags'),ir=idx('archive_reason');
+  return rows.slice(1).map((r,i)=>({
+    id:i,
+    title:r[it]||'', company:r[ic]||'', location:r[il]||'',
+    url:r[iu]||'', status:r[is]||'', stage:r[ig]||'',
+    date:(r[id]||'').slice(0,10), tags:r[itag]||'', reason:r[ir]||''
+  }));
+}
+
+function esc(s){return (s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+
+function badge(s){
+  const cls=s==='interview'?'b-interview':s==='archived'?'b-archived':'b-sent';
+  return `<span class="badge ${cls}">${esc(s)}</span>`;
+}
+
+function render(){
+  const f=document.getElementById('filter').value;
+  const list=jobs.filter(j=>f==='all'||j.status===f);
+  const t=today();
+  const clickedToday=Object.keys(clicks).filter(k=>clicks[k]===t).length;
+
+  const sc={sent:0,interview:0,archived:0};
+  jobs.forEach(j=>sc[j.status]=(sc[j.status]||0)+1);
+  document.getElementById('stats').innerHTML=
+    `<span class="chip">Всего: <b>${jobs.length}</b></span>`+
+    `<span class="chip">Sent: <b>${sc.sent||0}</b></span>`+
+    `<span class="chip">Interview: <b>${sc.interview||0}</b></span>`+
+    `<span class="chip">Archived: <b>${sc.archived||0}</b></span>`+
+    `<span class="chip">Открыто сегодня: <b>${clickedToday}</b></span>`;
+
+  if(!list.length){document.getElementById('content').innerHTML='<div class="empty">Нет записей</div>';return}
+
+  let html='<table><thead><tr><th>Позиция</th><th>Статус</th><th>Локация</th><th>Дата</th><th></th></tr></thead><tbody>';
+  list.forEach(j=>{
+    const ck=clicks[j.url]===t;
+    html+=`<tr class="${ck?'clicked':''}" data-url="${esc(j.url)}">
+      <td>
+        <a href="${esc(j.url)}" target="_blank" rel="noopener" data-link="${esc(j.url)}">${esc(j.title)}</a>
+        <div class="company">${esc(j.company)}</div>
+        ${j.tags?`<div class="tags">${esc(j.tags)}</div>`:''}
+      </td>
+      <td>${badge(j.status)}${j.stage?`<div class="stage">${esc(j.stage)}</div>`:''}${j.reason?`<div class="stage">${esc(j.reason)}</div>`:''}</td>
+      <td>${esc(j.location)}</td>
+      <td class="date">${j.date}</td>
+      <td>${ck?'<span class="clicked-mark">✓ сегодня</span>':''}</td>
+    </tr>`;
+  });
+  html+='</tbody></table>';
+  document.getElementById('content').innerHTML=html;
+
+  document.querySelectorAll('a[data-link]').forEach(a=>{
+    a.addEventListener('click',()=>{
+      clicks[a.dataset.link]=today();
+      localStorage.setItem(LS_KEY,JSON.stringify(clicks));
+      setTimeout(render,50);
+    });
+  });
+}
+
+function loadText(text){
+  jobs=parseCSV(text);
+  localStorage.setItem(LS_CSV,text);
+  render();
+}
+
+const file=document.getElementById('file'),drop=document.getElementById('drop');
+drop.addEventListener('click',()=>file.click());
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over')});
+drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+drop.addEventListener('drop',e=>{
+  e.preventDefault();drop.classList.remove('over');
+  if(e.dataTransfer.files.length)e.dataTransfer.files[0].text().then(loadText);
+});
+file.addEventListener('change',()=>{if(file.files.length)file.files[0].text().then(loadText)});
+document.getElementById('filter').addEventListener('change',render);
+document.getElementById('reset').addEventListener('click',()=>{
+  clicks={};localStorage.setItem(LS_KEY,'{}');render();
+});
+
+const saved=localStorage.getItem(LS_CSV);
+if(saved){loadText(saved)}
+</script>
+</body>
+</html>

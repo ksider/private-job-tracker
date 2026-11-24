@@ -294,7 +294,7 @@ export class JobDatabase {
         values.push(inactiveModifier);
       }
     }
-    const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: `${hiringActivitySql} DESC`, company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: 'jobs.title COLLATE NOCASE ASC', waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
+    const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: 'jobs.last_activity_at DESC', company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: 'jobs.title COLLATE NOCASE ASC', waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
     return this.db.prepare(`SELECT jobs.*,
       CASE WHEN jobs.status != 'archived' AND julianday(${hiringActivitySql}) < julianday('now', ?) THEN 1 ELSE 0 END AS is_inactive,
       ${hiringActivitySql} AS last_event_at,
