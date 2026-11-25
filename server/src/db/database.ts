@@ -32,6 +32,7 @@ export type EmailRecordRow = { id: string; uid_validity: string; imap_uid: numbe
 export type EmailLogRow = Omit<EmailRecordRow, 'body_text' | 'body_hash' | 'classification_json'>;
 export type EmailThreadRow = { id: string; created_at: string; updated_at: string };
 export type EmailLocationRow = { id: string; email_id: string; mailbox: string; uid_validity: string; imap_uid: number; first_seen_at: string; last_seen_at: string };
+export type OutreachEmailCandidate = { record_id: string; match_status: 'exact' | 'probable'; reasons: Array<'linked_thread' | 'contact_email'> };
 export type BackupSettingsRow = { webhook_url: string; encrypted_webhook_secret: string; automatic_enabled: number; interval_hours: number; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; updated_at: string };
 export type DisplaySettingsRow = { inactive_after_days: number; updated_at: string };
 export type ParserSourceMode = 'preset' | 'ai_manual' | 'ai_auto';
@@ -41,6 +42,16 @@ const hiringStageEventTypes = ['saved', 'applied', 'hr_screening', 'interview', 
 const hiringStageEventSet = new Set<JobEventType>(hiringStageEventTypes);
 const hiringStageEventSql = hiringStageEventTypes.map(type => `'${type}'`).join(', ');
 const hiringActivitySql = `COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN (${hiringStageEventSql})), jobs.created_at)`;
+const normalizeMessageId = (value: string | null | undefined) => {
+  const normalized = value?.trim().replace(/^<|>$/g, '').trim().toLowerCase();
+  return normalized ? `<${normalized}>` : null;
+};
+const normalizeReferences = (value: string | null | undefined) => {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return [...new Set((Array.isArray(parsed) ? parsed : []).map(item => normalizeMessageId(typeof item === 'string' ? item : null)).filter((item): item is string => Boolean(item)))];
+  } catch { return [] as string[]; }
+};
 
 export class JobDatabase {
   readonly db: Database.Database;
@@ -272,10 +283,14 @@ export class JobDatabase {
     this.db.exec("UPDATE email_records SET recipients_json='[]' WHERE recipients_json IS NULL OR json_valid(recipients_json)=0");
     this.db.exec("UPDATE email_records SET direction='unknown' WHERE direction IS NULL OR direction NOT IN ('incoming','outgoing','unknown')");
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS email_records_rfc_message_id ON email_records(rfc_message_id) WHERE rfc_message_id IS NOT NULL AND TRIM(rfc_message_id) <> '';");
+    this.db.exec("CREATE INDEX IF NOT EXISTS email_records_provider_message_id ON email_records(provider_message_id) WHERE provider_message_id IS NOT NULL AND TRIM(provider_message_id) <> '';");
     this.db.exec(`INSERT OR IGNORE INTO email_locations (id,email_id,mailbox,uid_validity,imap_uid,first_seen_at,last_seen_at)
       SELECT lower(hex(randomblob(16))), id,
         CASE WHEN instr(uid_validity, char(31)) > 0 THEN substr(uid_validity, 1, instr(uid_validity, char(31)) - 1) ELSE '' END,
         uid_validity, imap_uid, created_at, updated_at FROM email_records`);
+    const unthreaded = this.db.prepare('SELECT email_records.id,email_records.updated_at FROM email_records LEFT JOIN email_thread_messages ON email_thread_messages.email_id=email_records.id WHERE email_thread_messages.email_id IS NULL ORDER BY email_records.received_at,email_records.created_at').all() as Array<{ id: string; updated_at: string }>;
+    const backfillThreads = this.db.transaction(() => { for (const email of unthreaded) this.resolveEmailThread(email.id, email.updated_at); });
+    backfillThreads();
     this.db.exec("UPDATE jobs SET status='archived', archive_reason=CASE WHEN EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id AND email_effects.automatic=1) THEN 'email_exact' ELSE 'email_review' END, archive_seen_at=updated_at WHERE status='result' AND result_outcome='rejected' AND EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id)");
   }
   import(parsed: ParsedJob, raw: { html: string; text: string | null; collectorVersion: string; capturedAt: string; pageTitle?: string }) {
@@ -313,10 +328,11 @@ export class JobDatabase {
     this.insertEvent(id, 'saved', occurredAt);
     return this.get(id)!;
   }
-  list(filters: { search?: string; status?: string; source?: string; company?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; job_id?: string | string[]; order?: string; archive?: string; inactive?: string }) {
+  list(filters: { search?: string; record_type?: string; status?: string; source?: string; company?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; job_id?: string | string[]; order?: string; archive?: string; inactive?: string }) {
     const where: string[] = []; const values: unknown[] = [];
     const inactiveModifier = `-${this.displaySettings().inactive_after_days} days`;
-    if (filters.search) { where.push('(title LIKE ? OR company LIKE ?)'); values.push(`%${filters.search}%`, `%${filters.search}%`); }
+    if (filters.search) { where.push('(title LIKE ? OR company LIKE ? OR outreach_contact_name LIKE ? OR outreach_contact_email LIKE ? OR outreach_summary LIKE ?)'); values.push(...Array(5).fill(`%${filters.search}%`)); }
+    if (filters.record_type === 'application' || filters.record_type === 'cold_outreach') { where.push('record_type = ?'); values.push(filters.record_type); }
     if (filters.status) { where.push('status = ?'); values.push(filters.status); }
     if (filters.source) { where.push('source = ?'); values.push(filters.source); }
     if (filters.company) { where.push("TRIM(LOWER(COALESCE(company, ''))) = TRIM(LOWER(?))"); values.push(filters.company); }
@@ -324,9 +340,10 @@ export class JobDatabase {
     const jobIds = [...new Set((Array.isArray(filters.job_id) ? filters.job_id : filters.job_id ? [filters.job_id] : []).map(id => id.trim()).filter(Boolean))];
     if (jobIds.length) { where.push(`jobs.id IN (${jobIds.map(() => '?').join(',')})`); values.push(...jobIds); }
     const matches = [...new Set((Array.isArray(filters.match) ? filters.match : filters.match ? [filters.match] : []).map(match => match.trim()).filter(Boolean))];
-    if (matches.length) { const alternatives: string[] = []; const classifications = matches.filter(match => match !== 'not_analyzed'); if (classifications.length) { alternatives.push(`(SELECT classification FROM job_match_analyses WHERE job_match_analyses.job_id=jobs.id AND job_match_analyses.status='completed' ORDER BY completed_at DESC LIMIT 1) IN (${classifications.map(() => '?').join(',')})`); values.push(...classifications); } if (matches.includes('not_analyzed')) alternatives.push("NOT EXISTS (SELECT 1 FROM job_match_analyses WHERE job_match_analyses.job_id=jobs.id AND job_match_analyses.status='completed')"); where.push(`(${alternatives.join(' OR ')})`); }
+    if (matches.length) { where.push("record_type='application'"); const alternatives: string[] = []; const classifications = matches.filter(match => match !== 'not_analyzed'); if (classifications.length) { alternatives.push(`(SELECT classification FROM job_match_analyses WHERE job_match_analyses.job_id=jobs.id AND job_match_analyses.status='completed' ORDER BY completed_at DESC LIMIT 1) IN (${classifications.map(() => '?').join(',')})`); values.push(...classifications); } if (matches.includes('not_analyzed')) alternatives.push("NOT EXISTS (SELECT 1 FROM job_match_analyses WHERE job_match_analyses.job_id=jobs.id AND job_match_analyses.status='completed')"); where.push(`(${alternatives.join(' OR ')})`); }
     const countries = [...new Set((Array.isArray(filters.country) ? filters.country : filters.country ? [filters.country] : []).map(country => country.trim()).filter(Boolean))];
     if (countries.length) {
+      where.push("record_type='application'");
       const alternatives: string[] = []; const codes = countries.filter(country => country !== '__unknown__');
       if (countries.includes('__unknown__')) alternatives.push("geo_country_code IS NULL OR TRIM(geo_country_code) = ''");
       if (codes.length) { alternatives.push(`geo_country_code IN (${codes.map(() => '?').join(',')})`); values.push(...codes.map(country => country.toUpperCase())); }
@@ -334,6 +351,7 @@ export class JobDatabase {
     }
     const languages = [...new Set((Array.isArray(filters.language) ? filters.language : filters.language ? [filters.language] : []).map(language => language.trim().toLowerCase()).filter(Boolean))];
     if (languages.length) {
+      where.push("record_type='application'");
       const alternatives: string[] = []; const codes = languages.filter(language => language !== '__unknown__');
       if (languages.includes('__unknown__')) alternatives.push("posting_language_code IS NULL OR TRIM(posting_language_code) = ''");
       if (codes.length) { alternatives.push(`LOWER(posting_language_code) IN (${codes.map(() => '?').join(',')})`); values.push(...codes); }
@@ -353,7 +371,7 @@ export class JobDatabase {
         values.push(inactiveModifier);
       }
     }
-    const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: 'jobs.last_activity_at DESC', company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: 'jobs.title COLLATE NOCASE ASC', waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
+    const order = { newest: 'jobs.captured_at DESC', oldest: 'jobs.captured_at ASC', updated: 'jobs.last_activity_at DESC', company: 'jobs.company COLLATE NOCASE ASC', location: 'jobs.location COLLATE NOCASE ASC', title: "CASE WHEN jobs.record_type='cold_outreach' THEN COALESCE(jobs.outreach_contact_name,jobs.outreach_contact_email,'') ELSE COALESCE(jobs.title,'') END COLLATE NOCASE ASC", waiting: 'last_event_at ASC' }[filters.order ?? 'newest'] ?? 'jobs.captured_at DESC';
     return this.db.prepare(`SELECT jobs.*,
       CASE WHEN jobs.status != 'archived' AND julianday(${hiringActivitySql}) < julianday('now', ?) THEN 1 ELSE 0 END AS is_inactive,
       ${hiringActivitySql} AS last_event_at,
@@ -368,19 +386,22 @@ export class JobDatabase {
   }
   search(query: string, limit = 12) {
     const term = query.trim();
-    if (term.length < 2) return [] as Array<Pick<JobRow, 'id' | 'title' | 'company' | 'location' | 'status'> & { is_inactive: number }>;
+    if (term.length < 2) return [] as Array<Pick<JobRow, 'id' | 'record_type' | 'title' | 'company' | 'location' | 'outreach_contact_name' | 'outreach_contact_email' | 'status'> & { is_inactive: number }>;
     const inactiveModifier = `-${this.displaySettings().inactive_after_days} days`;
     const cappedLimit = Math.max(1, Math.min(limit, 25));
-    return this.db.prepare(`SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.status,
+    return this.db.prepare(`SELECT jobs.id, jobs.record_type, jobs.title, jobs.company, jobs.location, jobs.outreach_contact_name, jobs.outreach_contact_email, jobs.status,
       CASE WHEN jobs.status != 'archived' AND julianday(${hiringActivitySql}) < julianday('now', ?) THEN 1 ELSE 0 END AS is_inactive
       FROM jobs
       WHERE instr(LOWER(COALESCE(jobs.title, '')), LOWER(?)) > 0
         OR instr(LOWER(COALESCE(jobs.company, '')), LOWER(?)) > 0
+        OR instr(LOWER(COALESCE(jobs.outreach_contact_name, '')), LOWER(?)) > 0
+        OR instr(LOWER(COALESCE(jobs.outreach_contact_email, '')), LOWER(?)) > 0
+        OR instr(LOWER(COALESCE(jobs.outreach_summary, '')), LOWER(?)) > 0
       ORDER BY
-        CASE WHEN instr(LOWER(COALESCE(jobs.title, '')), LOWER(?)) > 0 THEN 0 ELSE 1 END,
+        CASE WHEN instr(LOWER(CASE WHEN jobs.record_type='cold_outreach' THEN COALESCE(jobs.outreach_contact_name,jobs.outreach_contact_email,'') ELSE COALESCE(jobs.title,'') END), LOWER(?)) > 0 THEN 0 ELSE 1 END,
         CASE WHEN jobs.status = 'archived' THEN 2 WHEN julianday(${hiringActivitySql}) < julianday('now', ?) THEN 1 ELSE 0 END,
         ${hiringActivitySql} DESC
-      LIMIT ?`).all(inactiveModifier, term, term, term, inactiveModifier, cappedLimit) as Array<Pick<JobRow, 'id' | 'title' | 'company' | 'location' | 'status'> & { is_inactive: number }>;
+      LIMIT ?`).all(inactiveModifier, term, term, term, term, term, term, inactiveModifier, cappedLimit) as Array<Pick<JobRow, 'id' | 'record_type' | 'title' | 'company' | 'location' | 'outreach_contact_name' | 'outreach_contact_email' | 'status'> & { is_inactive: number }>;
   }
   jobOptions() {
     return this.db.prepare("SELECT id, company, title, status FROM jobs WHERE record_type='application' ORDER BY CASE WHEN status='archived' THEN 1 ELSE 0 END, captured_at DESC").all() as Array<Pick<JobRow, 'id' | 'company' | 'title' | 'status'>>;
@@ -588,7 +609,7 @@ export class JobDatabase {
   update(id: string, patch: JobPatch, _options: { touchActivity?: boolean } = {}) {
     const old = this.get(id); if (!old) return undefined;
     const status = patch.interview_stage ? 'interview' : patch.status ?? old.status;
-    const interviewStage = status === 'interview' ? patch.interview_stage ?? (old.status === 'interview' ? old.interview_stage ?? 'hr_screening' : 'hr_screening') : null;
+    const interviewStage = old.record_type === 'application' && status === 'interview' ? patch.interview_stage ?? (old.status === 'interview' ? old.interview_stage ?? 'hr_screening' : 'hr_screening') : null;
     const now = new Date().toISOString();
     const archiveReason = status === 'archived' ? (patch.status === 'archived' ? 'manual' : old.archive_reason) : null; const archiveSeenAt = status === 'archived' ? (patch.status === 'archived' ? now : old.archive_seen_at) : null;
     const geoTouched = patch.geo_country_code !== undefined || patch.geo_country !== undefined || patch.geo_region !== undefined || patch.geo_city !== undefined;
@@ -597,9 +618,9 @@ export class JobDatabase {
     const resultOutcome = patch.result_outcome === undefined ? old.result_outcome : patch.result_outcome;
     const changesHiringStage = status !== old.status || interviewStage !== old.interview_stage || resultOutcome !== old.result_outcome;
     const lastActivityAt = changesHiringStage ? now : old.last_activity_at;
-    this.db.prepare('UPDATE jobs SET source_url=?, title=?, company=?, location=?, geo_country_code=?, geo_country=?, geo_region=?, geo_city=?, posting_language_code=?, geo_source=?, employment_type=?, workplace_type=?, application_id=?, result_outcome=?, status=?, interview_stage=?, archive_reason=?, archive_seen_at=?, cover_letter_text=?, cover_letter_updated_at=?, notes=?, created_at=?, updated_at=?, last_activity_at=? WHERE id=?').run(patch.source_url ?? old.source_url, patch.title ?? old.title, patch.company === undefined ? old.company : patch.company, patch.location === undefined ? old.location : patch.location, patch.geo_country_code === undefined ? old.geo_country_code : patch.geo_country_code, patch.geo_country === undefined ? old.geo_country : patch.geo_country, patch.geo_region === undefined ? old.geo_region : patch.geo_region, patch.geo_city === undefined ? old.geo_city : patch.geo_city, patch.posting_language_code === undefined ? old.posting_language_code : patch.posting_language_code, geoSource, patch.employment_type === undefined ? old.employment_type : patch.employment_type, patch.workplace_type === undefined ? old.workplace_type : patch.workplace_type, patch.application_id === undefined ? old.application_id : patch.application_id, resultOutcome, status, interviewStage, archiveReason, archiveSeenAt, patch.cover_letter_text === undefined ? old.cover_letter_text : patch.cover_letter_text, patch.cover_letter_text === undefined ? old.cover_letter_updated_at : now, patch.notes ?? old.notes, patch.created_at ?? old.created_at, changesHiringStage ? now : old.updated_at, lastActivityAt, id);
-    if (status === 'interview' && interviewStage && interviewStage !== old.interview_stage) this.insertEvent(id, interviewStage, now);
-    else if (patch.status && patch.status !== old.status) { const eventType: Partial<Record<JobStatus, JobEventType>> = { sent: 'applied', result: 'result' }; const event = eventType[status]; if (event) this.insertEvent(id, event, now); }
+    this.db.prepare('UPDATE jobs SET source_url=?, title=?, company=?, location=?, geo_country_code=?, geo_country=?, geo_region=?, geo_city=?, posting_language_code=?, geo_source=?, employment_type=?, workplace_type=?, application_id=?, result_outcome=?, status=?, interview_stage=?, archive_reason=?, archive_seen_at=?, cover_letter_text=?, cover_letter_updated_at=?, outreach_contact_name=?, outreach_contact_email=?, outreach_summary=?, outreach_summary_edited=?, notes=?, created_at=?, updated_at=?, last_activity_at=? WHERE id=?').run(patch.source_url ?? old.source_url, patch.title ?? old.title, patch.company === undefined ? old.company : patch.company, patch.location === undefined ? old.location : patch.location, patch.geo_country_code === undefined ? old.geo_country_code : patch.geo_country_code, patch.geo_country === undefined ? old.geo_country : patch.geo_country, patch.geo_region === undefined ? old.geo_region : patch.geo_region, patch.geo_city === undefined ? old.geo_city : patch.geo_city, patch.posting_language_code === undefined ? old.posting_language_code : patch.posting_language_code, geoSource, patch.employment_type === undefined ? old.employment_type : patch.employment_type, patch.workplace_type === undefined ? old.workplace_type : patch.workplace_type, patch.application_id === undefined ? old.application_id : patch.application_id, resultOutcome, status, interviewStage, archiveReason, archiveSeenAt, patch.cover_letter_text === undefined ? old.cover_letter_text : patch.cover_letter_text, patch.cover_letter_text === undefined ? old.cover_letter_updated_at : now, patch.outreach_contact_name === undefined ? old.outreach_contact_name : patch.outreach_contact_name, patch.outreach_contact_email === undefined ? old.outreach_contact_email : patch.outreach_contact_email, patch.outreach_summary === undefined ? old.outreach_summary : patch.outreach_summary, patch.outreach_summary === undefined ? old.outreach_summary_edited : 1, patch.notes ?? old.notes, patch.created_at ?? old.created_at, changesHiringStage ? now : old.updated_at, lastActivityAt, id);
+    if (old.record_type === 'application' && status === 'interview' && interviewStage && interviewStage !== old.interview_stage) this.insertEvent(id, interviewStage, now);
+    else if (old.record_type === 'application' && patch.status && patch.status !== old.status) { const eventType: Partial<Record<JobStatus, JobEventType>> = { sent: 'applied', result: 'result' }; const event = eventType[status]; if (event) this.insertEvent(id, event, now); }
     return this.get(id);
   }
   saveCoverLetter(id: string, text: string, model: string) {
@@ -788,14 +809,116 @@ export class JobDatabase {
   releaseImapSyncLease() { this.db.prepare('UPDATE imap_sync_lock SET locked_until=NULL WHERE id=1').run(); }
   hasEmail(uidValidity: string, uid: number) { return Boolean(this.db.prepare('SELECT 1 FROM email_locations WHERE uid_validity=? AND imap_uid=?').get(uidValidity, uid) ?? this.db.prepare('SELECT 1 FROM email_records WHERE uid_validity=? AND imap_uid=?').get(uidValidity, uid)); }
   saveEmail(input: Omit<EmailRecordRow, 'id' | 'created_at' | 'updated_at' | 'job_title' | 'job_company' | 'reversible_effect' | 'body_source' | 'review_action' | 'body_html' | 'rfc_message_id' | 'in_reply_to' | 'references_json' | 'provider_message_id' | 'provider_thread_id' | 'subject' | 'sender_name' | 'sender_email' | 'recipients_json' | 'direction' | 'original_url'> & Partial<Pick<EmailRecordRow, 'body_source' | 'review_action' | 'body_html' | 'rfc_message_id' | 'in_reply_to' | 'references_json' | 'provider_message_id' | 'provider_thread_id' | 'subject' | 'sender_name' | 'sender_email' | 'recipients_json' | 'direction' | 'original_url'>>) {
-    const now = new Date().toISOString(); const id = crypto.randomUUID();
+    const now = new Date().toISOString(); const newId = crypto.randomUUID();
+    const rfcMessageId = normalizeMessageId(input.rfc_message_id);
+    const inReplyTo = normalizeMessageId(input.in_reply_to);
+    const references = normalizeReferences(input.references_json);
+    const providerMessageId = input.provider_message_id?.trim() || null;
+    const providerThreadId = input.provider_thread_id?.trim() || null;
+    let savedId: string = newId;
     const save = this.db.transaction(() => {
-      this.db.prepare('INSERT INTO email_records (id,uid_validity,imap_uid,received_at,body_text,body_html,body_source,body_hash,rfc_message_id,in_reply_to,references_json,provider_message_id,provider_thread_id,subject,sender_name,sender_email,recipients_json,direction,original_url,category,classification_json,proposed_job_id,match_status,review_status,review_action,unresolved_reason,initial_import,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, input.uid_validity, input.imap_uid, input.received_at, input.body_text, input.body_html ?? null, input.body_source ?? 'plain', input.body_hash, input.rfc_message_id ?? null, input.in_reply_to ?? null, input.references_json ?? '[]', input.provider_message_id ?? null, input.provider_thread_id ?? null, input.subject ?? null, input.sender_name ?? null, input.sender_email ?? null, input.recipients_json ?? '[]', input.direction ?? 'unknown', input.original_url ?? null, input.category, input.classification_json, input.proposed_job_id, input.match_status, input.review_status, input.review_action ?? null, input.unresolved_reason, input.initial_import, now, now);
+      const byLocation = this.db.prepare('SELECT email_id AS id FROM email_locations WHERE uid_validity=? AND imap_uid=?').get(input.uid_validity, input.imap_uid) as { id: string } | undefined;
+      const byRfcId = rfcMessageId ? this.db.prepare('SELECT id FROM email_records WHERE rfc_message_id=?').get(rfcMessageId) as { id: string } | undefined : undefined;
+      const byProviderId = providerMessageId ? this.db.prepare('SELECT id FROM email_records WHERE provider_message_id=? ORDER BY created_at LIMIT 1').get(providerMessageId) as { id: string } | undefined : undefined;
+      const existing = byLocation ?? byRfcId ?? byProviderId;
+      savedId = existing?.id ?? newId;
+      if (existing) {
+        this.db.prepare(`UPDATE email_records SET
+          rfc_message_id=COALESCE(rfc_message_id,?), in_reply_to=COALESCE(in_reply_to,?),
+          references_json=CASE WHEN references_json='[]' THEN ? ELSE references_json END,
+          provider_message_id=COALESCE(provider_message_id,?), provider_thread_id=COALESCE(provider_thread_id,?),
+          subject=COALESCE(subject,?), sender_name=COALESCE(sender_name,?), sender_email=COALESCE(sender_email,?),
+          recipients_json=CASE WHEN recipients_json='[]' THEN ? ELSE recipients_json END,
+          direction=CASE WHEN direction='unknown' THEN ? ELSE direction END,
+          original_url=COALESCE(original_url,?), updated_at=? WHERE id=?`).run(
+          rfcMessageId, inReplyTo, JSON.stringify(references), providerMessageId, providerThreadId,
+          input.subject?.trim() || null, input.sender_name?.trim() || null, input.sender_email?.trim().toLowerCase() || null,
+          input.recipients_json ?? '[]', input.direction ?? 'unknown', input.original_url ?? null, now, savedId);
+      } else {
+        this.db.prepare('INSERT INTO email_records (id,uid_validity,imap_uid,received_at,body_text,body_html,body_source,body_hash,rfc_message_id,in_reply_to,references_json,provider_message_id,provider_thread_id,subject,sender_name,sender_email,recipients_json,direction,original_url,category,classification_json,proposed_job_id,match_status,review_status,review_action,unresolved_reason,initial_import,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(savedId, input.uid_validity, input.imap_uid, input.received_at, input.body_text, input.body_html ?? null, input.body_source ?? 'plain', input.body_hash, rfcMessageId, inReplyTo, JSON.stringify(references), providerMessageId, providerThreadId, input.subject?.trim() || null, input.sender_name?.trim() || null, input.sender_email?.trim().toLowerCase() || null, input.recipients_json ?? '[]', input.direction ?? 'unknown', input.original_url ?? null, input.category, input.classification_json, input.proposed_job_id, input.match_status, input.review_status, input.review_action ?? null, input.unresolved_reason, input.initial_import, now, now);
+      }
       const separator = input.uid_validity.indexOf('\u001f'); const mailbox = separator >= 0 ? input.uid_validity.slice(0, separator) : '';
-      this.db.prepare('INSERT INTO email_locations (id,email_id,mailbox,uid_validity,imap_uid,first_seen_at,last_seen_at) VALUES (?,?,?,?,?,?,?)').run(crypto.randomUUID(), id, mailbox, input.uid_validity, input.imap_uid, now, now);
+      this.db.prepare(`INSERT INTO email_locations (id,email_id,mailbox,uid_validity,imap_uid,first_seen_at,last_seen_at) VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(uid_validity,imap_uid) DO UPDATE SET last_seen_at=excluded.last_seen_at`).run(crypto.randomUUID(), savedId, mailbox, input.uid_validity, input.imap_uid, now, now);
+      this.resolveEmailThread(savedId, now);
     });
     save();
-    return this.email(id)!;
+    return this.email(savedId)!;
+  }
+  private resolveEmailThread(emailId: string, now = new Date().toISOString()) {
+    const email = this.email(emailId); if (!email) throw new Error('Email not found.');
+    const keys: Array<{ kind: 'provider_thread' | 'message_id'; value: string }> = [];
+    if (email.provider_thread_id?.trim()) keys.push({ kind: 'provider_thread', value: email.provider_thread_id.trim() });
+    for (const value of [normalizeMessageId(email.rfc_message_id), normalizeMessageId(email.in_reply_to), ...normalizeReferences(email.references_json)]) if (value) keys.push({ kind: 'message_id', value });
+    const current = this.db.prepare('SELECT thread_id FROM email_thread_messages WHERE email_id=?').get(emailId) as { thread_id: string } | undefined;
+    const threadIds = new Set<string>(current ? [current.thread_id] : []);
+    for (const key of keys) {
+      const found = this.db.prepare('SELECT thread_id FROM email_thread_keys WHERE kind=? AND value=?').get(key.kind, key.value) as { thread_id: string } | undefined;
+      if (found) threadIds.add(found.thread_id);
+    }
+    let threadId = current?.thread_id ?? [...threadIds].sort()[0];
+    if (!threadId) {
+      threadId = crypto.randomUUID();
+      this.db.prepare('INSERT INTO email_threads (id,created_at,updated_at) VALUES (?,?,?)').run(threadId, now, now);
+    }
+    for (const duplicateId of [...threadIds].filter(id => id !== threadId)) {
+      const links = this.db.prepare('SELECT DISTINCT record_id FROM outreach_conversation_threads WHERE thread_id IN (?,?)').all(threadId, duplicateId) as Array<{ record_id: string }>;
+      if (links.length > 1) throw new Error('Referenced email threads belong to different Cold Outreach conversations. Manual review is required.');
+      this.db.prepare('UPDATE email_thread_messages SET thread_id=? WHERE thread_id=?').run(threadId, duplicateId);
+      const duplicateKeys = this.db.prepare('SELECT kind,value,created_at FROM email_thread_keys WHERE thread_id=?').all(duplicateId) as Array<{ kind: string; value: string; created_at: string }>;
+      for (const key of duplicateKeys) this.db.prepare('INSERT OR IGNORE INTO email_thread_keys (thread_id,kind,value,created_at) VALUES (?,?,?,?)').run(threadId, key.kind, key.value, key.created_at);
+      const link = this.db.prepare('SELECT record_id,link_method,linked_at FROM outreach_conversation_threads WHERE thread_id=?').get(duplicateId) as { record_id: string; link_method: string; linked_at: string } | undefined;
+      if (link) this.db.prepare('INSERT OR IGNORE INTO outreach_conversation_threads (record_id,thread_id,link_method,linked_at) VALUES (?,?,?,?)').run(link.record_id, threadId, link.link_method, link.linked_at);
+      this.db.prepare('DELETE FROM email_threads WHERE id=?').run(duplicateId);
+    }
+    this.db.prepare(`INSERT INTO email_thread_messages (thread_id,email_id,link_method,linked_at) VALUES (?,?,?,?)
+      ON CONFLICT(email_id) DO UPDATE SET thread_id=excluded.thread_id`).run(threadId, emailId, email.provider_thread_id ? 'provider_thread' : email.in_reply_to || normalizeReferences(email.references_json).length ? 'message_reference' : 'standalone', now);
+    for (const key of keys) this.db.prepare('INSERT OR IGNORE INTO email_thread_keys (thread_id,kind,value,created_at) VALUES (?,?,?,?)').run(threadId, key.kind, key.value, now);
+    this.db.prepare('UPDATE email_threads SET updated_at=? WHERE id=?').run(now, threadId);
+    const conversation = this.conversationForThread(threadId);
+    if (conversation) this.touchOutreachActivity(conversation.record_id, email.received_at, now);
+    return threadId;
+  }
+  private touchOutreachActivity(recordId: string, occurredAt: string, now = new Date().toISOString()) {
+    this.db.prepare("UPDATE jobs SET last_activity_at=MAX(COALESCE(last_activity_at,created_at),?), updated_at=? WHERE id=? AND record_type='cold_outreach'").run(occurredAt, now, recordId);
+  }
+  threadForEmail(emailId: string) { return this.db.prepare('SELECT email_threads.* FROM email_threads JOIN email_thread_messages ON email_thread_messages.thread_id=email_threads.id WHERE email_thread_messages.email_id=?').get(emailId) as EmailThreadRow | undefined; }
+  conversationForThread(threadId: string) { return this.db.prepare('SELECT record_id,thread_id,link_method,linked_at FROM outreach_conversation_threads WHERE thread_id=?').get(threadId) as { record_id: string; thread_id: string; link_method: string; linked_at: string } | undefined; }
+  threadsForOutreach(recordId: string) { return this.db.prepare('SELECT email_threads.*,outreach_conversation_threads.link_method,outreach_conversation_threads.linked_at FROM email_threads JOIN outreach_conversation_threads ON outreach_conversation_threads.thread_id=email_threads.id WHERE outreach_conversation_threads.record_id=? ORDER BY email_threads.created_at').all(recordId) as Array<EmailThreadRow & { link_method: string; linked_at: string }>; }
+  messagesForOutreach(recordId: string) { return this.db.prepare(`SELECT email_records.*,email_thread_messages.thread_id FROM email_records
+    JOIN email_thread_messages ON email_thread_messages.email_id=email_records.id
+    JOIN outreach_conversation_threads ON outreach_conversation_threads.thread_id=email_thread_messages.thread_id
+    WHERE outreach_conversation_threads.record_id=? ORDER BY email_records.received_at,email_records.created_at`).all(recordId) as Array<EmailRecordRow & { thread_id: string }>; }
+  linkThreadToOutreach(recordId: string, threadId: string, linkMethod: 'manual' | 'explicit' = 'manual') {
+    const record = this.get(recordId); if (!record || record.record_type !== 'cold_outreach') throw new Error('Cold Outreach record not found.');
+    if (!this.db.prepare('SELECT 1 FROM email_threads WHERE id=?').get(threadId)) throw new Error('Email thread not found.');
+    const existing = this.conversationForThread(threadId);
+    if (existing && existing.record_id !== recordId) throw new Error('Email thread is already linked to another Cold Outreach conversation.');
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO outreach_conversation_threads (record_id,thread_id,link_method,linked_at) VALUES (?,?,?,?)
+      ON CONFLICT(thread_id) DO UPDATE SET link_method=excluded.link_method`).run(recordId, threadId, linkMethod, now);
+    const activity = this.db.prepare('SELECT MAX(email_records.received_at) AS received_at FROM email_records JOIN email_thread_messages ON email_thread_messages.email_id=email_records.id WHERE email_thread_messages.thread_id=?').get(threadId) as { received_at: string | null };
+    if (activity.received_at) this.touchOutreachActivity(recordId, activity.received_at, now);
+    return this.conversationForThread(threadId)!;
+  }
+  linkEmailToOutreach(recordId: string, emailId: string, linkMethod: 'manual' | 'explicit' = 'manual') {
+    const threadId = this.threadForEmail(emailId)?.id ?? this.resolveEmailThread(emailId);
+    return this.linkThreadToOutreach(recordId, threadId, linkMethod);
+  }
+  outreachCandidatesForEmail(emailId: string): OutreachEmailCandidate[] {
+    const email = this.email(emailId); if (!email) return [];
+    const thread = this.threadForEmail(emailId); const linked = thread ? this.conversationForThread(thread.id) : undefined;
+    if (linked) return [{ record_id: linked.record_id, match_status: 'exact', reasons: ['linked_thread'] }];
+    const addresses = new Set<string>();
+    if (email.sender_email) addresses.add(email.sender_email.trim().toLowerCase());
+    try {
+      const recipients = JSON.parse(email.recipients_json);
+      if (Array.isArray(recipients)) for (const recipient of recipients) if (typeof recipient?.address === 'string') addresses.add(recipient.address.trim().toLowerCase());
+    } catch { /* malformed optional metadata cannot create a match */ }
+    if (!addresses.size) return [];
+    const placeholders = [...addresses].map(() => '?').join(',');
+    const rows = this.db.prepare(`SELECT id AS record_id FROM jobs WHERE record_type='cold_outreach' AND LOWER(TRIM(COALESCE(outreach_contact_email,''))) IN (${placeholders}) ORDER BY created_at`).all(...addresses) as Array<{ record_id: string }>;
+    return rows.map(row => ({ record_id: row.record_id, match_status: 'probable', reasons: ['contact_email'] }));
   }
   email(id: string) { return this.db.prepare("SELECT email_records.*, jobs.title AS job_title, jobs.company AS job_company, CASE WHEN email_records.review_status='applied' THEN 1 ELSE 0 END AS reversible_effect FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id WHERE email_records.id=?").get(id) as EmailRecordRow | undefined; }
   classifyEmail(id: string, input: Pick<EmailRecordRow, 'category' | 'classification_json' | 'proposed_job_id' | 'match_status' | 'unresolved_reason' | 'review_status'>) {

@@ -51,7 +51,8 @@ export function buildApp(config: AppConfig) {
     const ids = new Set(availableTags.map(tag => tag.id)); const idsByName = new Map(availableTags.map(tag => [tag.name.toLocaleLowerCase(), tag.id]));
     return [...new Set(values.map(value => ids.has(value) ? value : idsByName.get(value.toLocaleLowerCase())).filter((id): id is string => Boolean(id)))].slice(0, 5);
   };
-  const jobView = (job: NonNullable<ReturnType<JobDatabase['get']>>) => ({ ...job, next_interview: db.nextAppointment(job.id) });
+  const jobView = (job: NonNullable<ReturnType<JobDatabase['get']>>) => ({ ...job, next_interview: job.record_type === 'application' ? db.nextAppointment(job.id) : null });
+  const applicationOnlyError = { error: 'This action is available only for application records.' };
   const backupView = () => { const { encrypted_webhook_secret, ...settings } = db.backupSettings(); return { ...settings, automatic_enabled: Boolean(settings.automatic_enabled), webhook_secret_configured: Boolean(encrypted_webhook_secret) }; };
   const isEasyApplyTag = (name: string) => name.trim().toLocaleLowerCase() === 'easy apply';
   const assignEasyApplyTag = (jobId: string) => {
@@ -190,9 +191,9 @@ export function buildApp(config: AppConfig) {
     return { success: true, job_id: result.jobId, action: result.action, parser: parser.source, warnings: parsed.warnings };
   });
   app.get('/api/jobs', async request => {
-    const listed = db.list(request.query as { search?: string; status?: string; source?: string; company?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; job_id?: string | string[]; order?: string; archive?: string; inactive?: string }); const ids = listed.map(job => job.id);
-    const tags = db.tagsForJobs(ids); const nextInterviews = db.nextAppointmentsForJobs(ids); const analyses = db.latestAnalysesForJobs(ids); const profile = await profiles.load().catch(() => undefined);
-    return listed.map(job => ({ ...job, next_interview: nextInterviews.get(job.id) ?? null, tags: tags.get(job.id) ?? [], ai_match: analysisView(analyses.get(job.id), profile, job.description_text) }));
+    const listed = db.list(request.query as { search?: string; record_type?: string; status?: string; source?: string; company?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; job_id?: string | string[]; order?: string; archive?: string; inactive?: string }); const ids = listed.map(job => job.id); const applicationIds = listed.filter(job => job.record_type === 'application').map(job => job.id);
+    const tags = db.tagsForJobs(ids); const nextInterviews = db.nextAppointmentsForJobs(applicationIds); const analyses = db.latestAnalysesForJobs(applicationIds); const profile = applicationIds.length ? await profiles.load().catch(() => undefined) : undefined;
+    return listed.map(job => ({ ...job, next_interview: nextInterviews.get(job.id) ?? null, tags: tags.get(job.id) ?? [], ai_match: job.record_type === 'application' ? analysisView(analyses.get(job.id), profile, job.description_text) : null }));
   });
   app.get('/api/search', async request => {
     const { q } = request.query as { q?: string };
@@ -201,10 +202,10 @@ export function buildApp(config: AppConfig) {
   app.get('/api/jobs/options', async () => db.jobOptions());
   app.get('/api/jobs/countries', async () => db.countryFilters());
   app.get('/api/jobs/languages', async () => db.languageFilters());
-  app.get('/api/jobs/:id', async (request, reply) => { const id = (request.params as { id: string }).id; const job = db.get(id); const profile = await profiles.load().catch(() => undefined); return job ? { ...jobView(job), tags: db.tagsForJob(id), description_html: safeDescriptionHtml(job.description_html), events: db.events(id), appointments: db.appointments(id), ai_match: analysisView(db.latestAnalysis(id), profile, job.description_text) } : reply.code(404).send({ error: 'Job not found' }); });
+  app.get('/api/jobs/:id', async (request, reply) => { const id = (request.params as { id: string }).id; const job = db.get(id); if (!job) return reply.code(404).send({ error: 'Job not found' }); const profile = job.record_type === 'application' ? await profiles.load().catch(() => undefined) : undefined; return { ...jobView(job), tags: db.tagsForJob(id), description_html: job.record_type === 'application' ? safeDescriptionHtml(job.description_html) : null, events: db.events(id), appointments: job.record_type === 'application' ? db.appointments(id) : [], ai_match: job.record_type === 'application' ? analysisView(db.latestAnalysis(id), profile, job.description_text) : null }; });
   app.get('/api/jobs/:id/technical', async (request, reply) => {
     const id = (request.params as { id: string }).id; const job = db.get(id); if (!job) return reply.code(404).send({ error: 'Job not found' });
-    const technicalJob = { id: job.id, source: job.source, source_job_id: job.source_job_id, source_url: job.source_url, parse_status: job.parse_status, status: job.status, interview_stage: job.interview_stage, application_id: job.application_id, posting_language_code: job.posting_language_code, geo_source: job.geo_source, captured_at: job.captured_at, created_at: job.created_at, updated_at: job.updated_at, last_activity_at: job.last_activity_at };
+    const technicalJob = { id: job.id, record_type: job.record_type, source: job.source, source_job_id: job.source_job_id, source_url: job.source_url, parse_status: job.parse_status, status: job.status, interview_stage: job.interview_stage, application_id: job.application_id, posting_language_code: job.posting_language_code, geo_source: job.geo_source, outreach_contact_email: job.outreach_contact_email, captured_at: job.captured_at, created_at: job.created_at, updated_at: job.updated_at, last_activity_at: job.last_activity_at };
     return { job: technicalJob, snapshots: db.snapshotSummaries(id) };
   });
   app.get('/api/jobs/:id/snapshots/:snapshotId', async (request, reply) => {
@@ -216,16 +217,17 @@ export function buildApp(config: AppConfig) {
     const result = db.deleteOldSnapshot(id, snapshotId); if (result === 'not_found') return reply.code(404).send({ error: 'Snapshot not found' }); if (result === 'latest') return reply.code(409).send({ error: 'Последний snapshot защищён. Сначала сохраните новую версию вакансии.' });
     return { deleted: true, snapshots: db.snapshotSummaries(id) };
   });
-  app.patch('/api/jobs/:id', async (request, reply) => { const checked = JobPatchSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid job update', details: checked.error.flatten() }); const job = db.update((request.params as { id: string }).id, checked.data); return job ?? reply.code(404).send({ error: 'Job not found' }); });
+  app.patch('/api/jobs/:id', async (request, reply) => { const checked = JobPatchSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid job update', details: checked.error.flatten() }); const id = (request.params as { id: string }).id; const existing = db.get(id); if (!existing) return reply.code(404).send({ error: 'Job not found' }); const outreachFields = ['outreach_contact_name', 'outreach_contact_email', 'outreach_summary'] as const; const applicationFields = ['title', 'location', 'geo_country_code', 'geo_country', 'geo_region', 'geo_city', 'posting_language_code', 'geo_source', 'employment_type', 'workplace_type', 'application_id', 'result_outcome', 'cover_letter_text', 'source_url', 'interview_stage'] as const; if (existing.record_type === 'application' && outreachFields.some(field => checked.data[field] !== undefined)) return reply.code(409).send({ error: 'Outreach fields cannot be added to an application record.' }); if (existing.record_type === 'cold_outreach' && applicationFields.some(field => checked.data[field] !== undefined)) return reply.code(409).send({ error: 'Vacancy fields cannot be added to a Cold Outreach record.' }); return db.update(id, checked.data)!; });
   app.post('/api/jobs/:id/ai-location', async (request, reply) => {
     const checked = LocationNormalizeRequestSchema.safeParse(request.body ?? {}); if (!checked.success) return reply.code(400).send({ error: 'Invalid location normalization request', details: checked.error.flatten() });
+    const record = db.get((request.params as { id: string }).id); if (record?.record_type === 'cold_outreach') return reply.code(409).send(applicationOnlyError);
     try { return await normalizeLocationForJob((request.params as { id: string }).id, checked.data.model); }
     catch (error) { const message = error instanceof Error ? error.message : 'AI location normalization failed.'; app.log.warn({ err: error, jobId: (request.params as { id: string }).id }, 'AI location normalization failed'); return reply.code(message === 'Job not found' ? 404 : 502).send({ error: message.startsWith('This vacancy') || message.startsWith('Configure') || message.startsWith('AI provider') ? message : 'AI location normalization failed. Check the server log for details.' }); }
   });
   app.post('/api/jobs/:id/events', async (request, reply) => { const checked = JobEventCreateSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid timeline event', details: checked.error.flatten() }); const job = db.addEvent((request.params as { id: string }).id, checked.data); return job ? { job, events: db.events(job.id) } : reply.code(404).send({ error: 'Job not found' }); });
   app.patch('/api/jobs/:jobId/events/:eventId', async (request, reply) => { const checked = JobEventPatchSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid timeline event', details: checked.error.flatten() }); const params = request.params as { jobId: string; eventId: string }; const job = db.updateEvent(params.jobId, params.eventId, checked.data); return job ? { job, events: db.events(job.id) } : reply.code(404).send({ error: 'Timeline event not found' }); });
   app.delete('/api/jobs/:jobId/events/:eventId', async (request, reply) => { const params = request.params as { jobId: string; eventId: string }; const job = db.deleteEvent(params.jobId, params.eventId); return job ? { job, events: db.events(job.id) } : reply.code(404).send({ error: 'Timeline event not found' }); });
-  app.post('/api/jobs/:id/interviews', async (request, reply) => { const checked = InterviewAppointmentCreateSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid interview appointment', details: checked.error.flatten() }); const jobId = (request.params as { id: string }).id; const job = db.get(jobId); if (!job) return reply.code(404).send({ error: 'Job not found' }); if (job.status !== 'interview') return reply.code(409).send({ error: 'Переведите вакансию на этап «Интервью», прежде чем назначать встречу.' }); return db.createAppointment(jobId, { ...checked.data, time_zone: checked.data.time_zone ?? null, meeting_url: checked.data.meeting_url ?? null }); });
+  app.post('/api/jobs/:id/interviews', async (request, reply) => { const checked = InterviewAppointmentCreateSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid interview appointment', details: checked.error.flatten() }); const jobId = (request.params as { id: string }).id; const job = db.get(jobId); if (!job) return reply.code(404).send({ error: 'Job not found' }); if (job.record_type !== 'application') return reply.code(409).send(applicationOnlyError); if (job.status !== 'interview') return reply.code(409).send({ error: 'Переведите вакансию на этап «Интервью», прежде чем назначать встречу.' }); return db.createAppointment(jobId, { ...checked.data, time_zone: checked.data.time_zone ?? null, meeting_url: checked.data.meeting_url ?? null }); });
   app.patch('/api/jobs/:jobId/interviews/:id', async (request, reply) => { const checked = InterviewAppointmentPatchSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid interview appointment', details: checked.error.flatten() }); const appointment = db.updateAppointment((request.params as { jobId: string }).jobId, (request.params as { id: string }).id, checked.data); return appointment ?? reply.code(404).send({ error: 'Interview appointment not found' }); });
   app.put('/api/jobs/:id/tags', async (request, reply) => { const checked = JobTagsSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid job tags', details: checked.error.flatten() }); try { const tags = db.setTags((request.params as { id: string }).id, checked.data.tag_ids); return tags ?? reply.code(404).send({ error: 'Job not found' }); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Could not update tags' }); } });
   app.get('/api/tags', async () => db.listTagsWithUsage());
@@ -298,6 +300,7 @@ export function buildApp(config: AppConfig) {
   app.post('/api/jobs/:id/tag-suggestions', async (request, reply) => {
     const checked = TagSuggestionsRequestSchema.safeParse(request.body ?? {}); if (!checked.success) return reply.code(400).send({ error: 'Invalid tag suggestion request', details: checked.error.flatten() });
     const job = db.get((request.params as { id: string }).id); if (!job) return reply.code(404).send({ error: 'Job not found' });
+    if (job.record_type !== 'application') return reply.code(409).send(applicationOnlyError);
     const availableTags = db.listTags();
     if (!db.routeCandidates('tags', checked.data.connection_id).length) return reply.code(409).send({ error: 'Configure an enabled AI route for tags first.' });
     const description = job.description_text ?? ''; if (!description.trim()) return reply.code(422).send({ error: 'This vacancy has no captured text description to classify.' });
@@ -308,6 +311,7 @@ export function buildApp(config: AppConfig) {
   app.post('/api/jobs/:id/ai-parse', async (request, reply) => {
     const checked = GenericParseRequestSchema.safeParse(request.body ?? {}); if (!checked.success) return reply.code(400).send({ error: 'Invalid generic parse request', details: checked.error.flatten() });
     const job = db.get((request.params as { id: string }).id); if (!job) return reply.code(404).send({ error: 'Job not found' });
+    if (job.record_type !== 'application') return reply.code(409).send(applicationOnlyError);
     if (job.source !== 'generic') return reply.code(409).send({ error: 'AI structured parsing is available only for Generic vacancies.' });
     if (!db.routeCandidates('generic_parse', checked.data.connection_id).length) return reply.code(409).send({ error: 'Configure an enabled AI route for Generic parsing first.' });
     const snapshot = db.latestSnapshot(job.id); const snapshotText = snapshot?.raw_text ?? job.description_text ?? '';
@@ -324,6 +328,7 @@ export function buildApp(config: AppConfig) {
   app.post('/api/jobs/:id/ai-snapshot-parse', async (request, reply) => {
     const checked = GenericParseRequestSchema.safeParse(request.body ?? {}); if (!checked.success) return reply.code(400).send({ error: 'Invalid snapshot parse request', details: checked.error.flatten() });
     const job = db.get((request.params as { id: string }).id); if (!job) return reply.code(404).send({ error: 'Job not found' });
+    if (job.record_type !== 'application') return reply.code(409).send(applicationOnlyError);
     if (!db.routeCandidates('snapshot_parse', checked.data.connection_id).length) return reply.code(409).send({ error: 'Configure an enabled AI route for snapshot parsing first.' });
     const snapshot = db.latestSnapshot(job.id); if (!snapshot?.raw_html.trim()) return reply.code(422).send({ error: 'This vacancy has no captured HTML snapshot to parse.' });
     try {
@@ -345,6 +350,7 @@ export function buildApp(config: AppConfig) {
     if (!checked.success) return reply.code(400).send({ error: 'Invalid match request', details: checked.error.flatten() });
     const job = db.get((request.params as { id: string }).id);
     if (!job) return reply.code(404).send({ error: 'Job not found' });
+    if (job.record_type !== 'application') return reply.code(409).send(applicationOnlyError);
     const candidates = db.routeCandidates('match', checked.data.connection_id); const consentCandidate = candidates.find(candidate => !candidate.profile_consent_at);
     if (!candidates.length) return reply.code(409).send({ error: 'Configure an enabled AI route for Match first.' });
     if (consentCandidate) { if (!checked.data.consent) return reply.code(412).send({ error: `Confirm that your candidate profile may be sent to ${consentCandidate.display_name}.`, requires_consent: true, connection_id: consentCandidate.id }); db.giveProfileConsent(consentCandidate.id); }
@@ -367,13 +373,14 @@ export function buildApp(config: AppConfig) {
       return reply.code(502).send({ error: safeMessage });
     }
   });
-  app.get('/api/jobs/:id/ai-match', async (request, reply) => { const job = db.get((request.params as { id: string }).id); if (!job) return reply.code(404).send({ error: 'Job not found' }); const profile = await profiles.load().catch(() => undefined); return { analysis: analysisView(db.latestAnalysis(job.id), profile, job.description_text) }; });
-  app.get('/api/jobs/:id/ai-match/history', async (request, reply) => { const job = db.get((request.params as { id: string }).id); if (!job) return reply.code(404).send({ error: 'Job not found' }); return { analyses: db.analysisHistory(job.id).map(analysis => analysisView(analysis)) }; });
+  app.get('/api/jobs/:id/ai-match', async (request, reply) => { const job = db.get((request.params as { id: string }).id); if (!job) return reply.code(404).send({ error: 'Job not found' }); if (job.record_type !== 'application') return reply.code(409).send(applicationOnlyError); const profile = await profiles.load().catch(() => undefined); return { analysis: analysisView(db.latestAnalysis(job.id), profile, job.description_text) }; });
+  app.get('/api/jobs/:id/ai-match/history', async (request, reply) => { const job = db.get((request.params as { id: string }).id); if (!job) return reply.code(404).send({ error: 'Job not found' }); if (job.record_type !== 'application') return reply.code(409).send(applicationOnlyError); return { analyses: db.analysisHistory(job.id).map(analysis => analysisView(analysis)) }; });
   app.post('/api/jobs/:id/cover-letter', async (request, reply) => {
     const checked = CoverLetterRequestSchema.safeParse(request.body ?? {});
     if (!checked.success) return reply.code(400).send({ error: 'Invalid cover letter request', details: checked.error.flatten() });
     const job = db.get((request.params as { id: string }).id);
     if (!job) return reply.code(404).send({ error: 'Job not found' });
+    if (job.record_type !== 'application') return reply.code(409).send(applicationOnlyError);
     const description = job.description_text?.trim() ?? '';
     if (!description) return reply.code(422).send({ error: 'This vacancy has no captured text description for a cover letter.' });
     const candidates = db.routeCandidates('cover_letter', checked.data.connection_id); const consentCandidate = candidates.find(candidate => !candidate.profile_consent_at);

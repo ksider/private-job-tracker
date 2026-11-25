@@ -49,7 +49,10 @@ export const JobPatchSchema = z.object({
   created_at: z.string().datetime().optional(),
   status: JobStatusSchema.optional(),
   interview_stage: InterviewStageSchema.optional(),
-  notes: z.string().max(20_000).optional()
+  notes: z.string().max(20_000).optional(),
+  outreach_contact_name: JobTextField,
+  outreach_contact_email: z.string().trim().email().max(500).transform(value => value.toLowerCase()).nullable().optional(),
+  outreach_summary: z.string().trim().max(2_000).transform(value => value || null).nullable().optional()
 }).refine(value => Object.values(value).some(value => value !== undefined), 'At least one field is required');
 export type JobPatch = z.infer<typeof JobPatchSchema>;
 export const JobEventCreateSchema = z.object({
