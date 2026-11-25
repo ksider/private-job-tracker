@@ -64,7 +64,7 @@ export class EmailSyncService {
       if (!settings.ai_consent_at) throw new Error('Save consent to send email text to AI first.');
       classification = (await this.aiRouter.run('email', 'email', ({ provider, connection }) => classifyEmail(provider, connection, email.body_text))).value;
     }
-    const match = matchEmailToJob(this.db.list({ archive: 'all' }), classification, email.body_text);
+    const match = matchEmailToJob(this.db.list({ archive: 'all' }).filter(job => job.record_type === 'application'), classification, email.body_text);
     return this.db.classifyEmail(id, { category: classification.category, classification_json: JSON.stringify(classification), proposed_job_id: match.jobId, match_status: match.status, unresolved_reason: match.unresolvedReason, review_status: classification.category === 'other' ? 'ignored' : 'pending_review' });
   }
   private async sync(): Promise<SyncResult> {
@@ -110,7 +110,7 @@ export class EmailSyncService {
       try {
         const classification = (await this.aiRouter.run('email', 'email', ({ provider, connection }) => classifyEmail(provider, connection, input.body))).value;
         category = classification.category; classificationJson = JSON.stringify(classification);
-        const match = matchEmailToJob(this.db.list({ archive: 'all' }), classification, input.body); proposedJobId = match.jobId; matchStatus = match.status; unresolvedReason = match.unresolvedReason;
+        const match = matchEmailToJob(this.db.list({ archive: 'all' }).filter(job => job.record_type === 'application'), classification, input.body); proposedJobId = match.jobId; matchStatus = match.status; unresolvedReason = match.unresolvedReason;
       } catch (error) {
         // A shared provider quota may already be exhausted even when this
         // tracker obeys its own configured spacing. Keep the email for review

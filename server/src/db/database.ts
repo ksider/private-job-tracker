@@ -5,7 +5,8 @@ import { calculateCohortAnalytics } from '../analytics/cohorts.js';
 import { dayInTimeZone, utcRangeForLocalDays } from '../analytics/dates.js';
 
 export type ParsedJob = { source: string; sourceJobId?: string; sourceUrl: string; title?: string; company?: string; location?: string; workplaceType?: string; employmentType?: string; descriptionHtml?: string; descriptionText?: string; easyApply?: boolean; warnings: string[]; parseStatus: 'parsed' | 'partial' | 'parse_failed'; parserVersion: string };
-export type JobRow = { id: string; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; posting_language_code: string | null; geo_source: 'ai' | 'manual' | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; cover_letter_text: string | null; cover_letter_model: string | null; cover_letter_updated_at: string | null; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; last_activity_at: string; parse_status: string; last_event_at: string; stage_started_at: string; is_inactive?: number };
+export type RecordType = 'application' | 'cold_outreach';
+export type JobRow = { id: string; record_type: RecordType; source: string; source_job_id: string | null; source_url: string; title: string | null; company: string | null; location: string | null; geo_country_code: string | null; geo_country: string | null; geo_region: string | null; geo_city: string | null; posting_language_code: string | null; geo_source: 'ai' | 'manual' | null; workplace_type: string | null; employment_type: string | null; application_id: string | null; result_outcome: 'rejected' | 'offer' | 'withdrawn' | 'other' | null; archive_reason: 'email_exact' | 'email_review' | 'manual' | null; archive_seen_at: string | null; description_html: string | null; description_text: string | null; cover_letter_text: string | null; cover_letter_model: string | null; cover_letter_updated_at: string | null; outreach_contact_name: string | null; outreach_contact_email: string | null; outreach_summary: string | null; outreach_summary_edited: number; status: JobStatus; interview_stage: InterviewStage | null; notes: string; captured_at: string; created_at: string; updated_at: string; last_activity_at: string; parse_status: string; last_event_at: string; stage_started_at: string; is_inactive?: number };
 export type ApplicationEffectivenessRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; result_outcome: JobRow['result_outcome']; applied_at: string; response_at: string | null; hr_response_at: string | null; ai_classification: MatchClassification | null; tags: string[] };
 export type ApplicationSankeyRow = { id: string; source: string; geo_country_code: string | null; geo_country: string | null; geo_city: string | null; location: string | null; posting_language_code: string | null; ai_classification: MatchClassification | null; result_outcome: JobRow['result_outcome']; applied_at: string; events: Array<Pick<JobEventRow, 'type' | 'occurred_at' | 'created_at'>>; tags: Array<{ id: string; name: string; color: string }> };
 export type CohortApplicationRow = { id: string; applied_at: string; application_date_source: 'applied_event' | 'created_at'; first_response_event_at: string | null; first_response_email_at: string | null; first_hr_event_at: string | null; first_hr_email_at: string | null; has_undated_hr_progression: number };
@@ -26,8 +27,11 @@ export type AiSettingsRow = { default_connection_id: string | null; default_mode
 export type AiAnalysisRow = { id: string; job_id: string; provider_connection_id: string | null; provider_type: ProviderType; model: string; profile_hash: string; job_description_hash: string; prompt_version: string; classification: MatchClassification | null; result_json: string | null; status: 'running' | 'completed' | 'failed'; error_message: string | null; created_at: string; completed_at: string | null };
 export type AiStrategyAnalysisRow = { id: string; provider_connection_id: string | null; provider_type: ProviderType; model: string; stats_hash: string; prompt_version: string; range_from: string | null; range_to: string | null; result_json: string; created_at: string };
 export type ImapSettingsRow = { host: string; port: number; tls_mode: 'tls' | 'starttls'; username: string; encrypted_password: string; mailbox: string; interview_mailbox: string; rejection_mailbox: string; enabled: number; sync_interval_minutes: number; initial_sync_days: number; rejection_handling: 'manual_review' | 'auto_exact' | 'notifications_only'; ai_consent_at: string | null; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; processed_count: number; rejection_count: number; review_count: number; updated_at: string };
-export type EmailRecordRow = { id: string; uid_validity: string; imap_uid: number; received_at: string; body_text: string; body_source: 'plain' | 'html_fallback' | 'missing'; body_hash: string; category: string | null; classification_json: string | null; proposed_job_id: string | null; match_status: 'exact' | 'probable' | 'no_match' | null; review_status: 'pending_review' | 'applied' | 'ignored' | 'reverted'; review_action: 'none' | 'rejection' | 'interview' | null; unresolved_reason: string | null; initial_import: number; created_at: string; updated_at: string; job_title?: string | null; job_company?: string | null; reversible_effect?: number };
+export type EmailDirection = 'incoming' | 'outgoing' | 'unknown';
+export type EmailRecordRow = { id: string; uid_validity: string; imap_uid: number; received_at: string; body_text: string; body_html: string | null; body_source: 'plain' | 'html_fallback' | 'missing'; body_hash: string; rfc_message_id: string | null; in_reply_to: string | null; references_json: string; provider_message_id: string | null; provider_thread_id: string | null; subject: string | null; sender_name: string | null; sender_email: string | null; recipients_json: string; direction: EmailDirection; original_url: string | null; category: string | null; classification_json: string | null; proposed_job_id: string | null; match_status: 'exact' | 'probable' | 'no_match' | null; review_status: 'pending_review' | 'applied' | 'ignored' | 'reverted'; review_action: 'none' | 'rejection' | 'interview' | null; unresolved_reason: string | null; initial_import: number; created_at: string; updated_at: string; job_title?: string | null; job_company?: string | null; reversible_effect?: number };
 export type EmailLogRow = Omit<EmailRecordRow, 'body_text' | 'body_hash' | 'classification_json'>;
+export type EmailThreadRow = { id: string; created_at: string; updated_at: string };
+export type EmailLocationRow = { id: string; email_id: string; mailbox: string; uid_validity: string; imap_uid: number; first_seen_at: string; last_seen_at: string };
 export type BackupSettingsRow = { webhook_url: string; encrypted_webhook_secret: string; automatic_enabled: number; interval_hours: number; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; updated_at: string };
 export type DisplaySettingsRow = { inactive_after_days: number; updated_at: string };
 export type ParserSourceMode = 'preset' | 'ai_manual' | 'ai_auto';
@@ -43,9 +47,9 @@ export class JobDatabase {
   constructor(path: string) { this.db = new Database(path); this.db.pragma('journal_mode = WAL'); this.db.pragma('foreign_keys = ON'); this.migrate(); }
   private migrate() {
     this.db.exec(`CREATE TABLE IF NOT EXISTS jobs (
-      id TEXT PRIMARY KEY, source TEXT NOT NULL, source_job_id TEXT, source_url TEXT NOT NULL,
+      id TEXT PRIMARY KEY, record_type TEXT NOT NULL DEFAULT 'application', source TEXT NOT NULL, source_job_id TEXT, source_url TEXT NOT NULL,
       title TEXT, company TEXT, location TEXT, geo_country_code TEXT, geo_country TEXT, geo_region TEXT, geo_city TEXT, posting_language_code TEXT, geo_source TEXT, workplace_type TEXT, employment_type TEXT, application_id TEXT, result_outcome TEXT, cover_letter_text TEXT, cover_letter_model TEXT, cover_letter_updated_at TEXT,
-      description_html TEXT, description_text TEXT, status TEXT NOT NULL DEFAULT 'saved', interview_stage TEXT, notes TEXT NOT NULL DEFAULT '',
+      description_html TEXT, description_text TEXT, outreach_contact_name TEXT, outreach_contact_email TEXT, outreach_summary TEXT, outreach_summary_edited INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'saved', interview_stage TEXT, notes TEXT NOT NULL DEFAULT '',
       captured_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_activity_at TEXT NOT NULL, parse_status TEXT NOT NULL DEFAULT 'partial');
       CREATE UNIQUE INDEX IF NOT EXISTS jobs_linkedin_source_id ON jobs(source, source_job_id) WHERE source_job_id IS NOT NULL;
       CREATE UNIQUE INDEX IF NOT EXISTS jobs_other_url ON jobs(source, source_url) WHERE source_job_id IS NULL;
@@ -112,11 +116,18 @@ export class JobDatabase {
     if (!jobColumns.some(column => column.name === 'cover_letter_model')) this.db.exec('ALTER TABLE jobs ADD COLUMN cover_letter_model TEXT');
     if (!jobColumns.some(column => column.name === 'cover_letter_updated_at')) this.db.exec('ALTER TABLE jobs ADD COLUMN cover_letter_updated_at TEXT');
     if (!jobColumns.some(column => column.name === 'geo_source')) this.db.exec('ALTER TABLE jobs ADD COLUMN geo_source TEXT');
+    if (!jobColumns.some(column => column.name === 'record_type')) this.db.exec("ALTER TABLE jobs ADD COLUMN record_type TEXT NOT NULL DEFAULT 'application'");
+    if (!jobColumns.some(column => column.name === 'outreach_contact_name')) this.db.exec('ALTER TABLE jobs ADD COLUMN outreach_contact_name TEXT');
+    if (!jobColumns.some(column => column.name === 'outreach_contact_email')) this.db.exec('ALTER TABLE jobs ADD COLUMN outreach_contact_email TEXT');
+    if (!jobColumns.some(column => column.name === 'outreach_summary')) this.db.exec('ALTER TABLE jobs ADD COLUMN outreach_summary TEXT');
+    if (!jobColumns.some(column => column.name === 'outreach_summary_edited')) this.db.exec('ALTER TABLE jobs ADD COLUMN outreach_summary_edited INTEGER NOT NULL DEFAULT 0');
+    this.db.exec("UPDATE jobs SET record_type='application' WHERE record_type IS NULL OR record_type NOT IN ('application','cold_outreach')");
     if (!jobColumns.some(column => column.name === 'last_activity_at')) {
       this.db.exec(`ALTER TABLE jobs ADD COLUMN last_activity_at TEXT;
         UPDATE jobs SET last_activity_at = MAX(created_at, captured_at, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_events.job_id = jobs.id AND type IN (${hiringStageEventSql})), ''));`);
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS jobs_status_last_activity_at ON jobs(status, last_activity_at DESC)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS jobs_record_type_status_activity ON jobs(record_type, status, last_activity_at DESC)');
     const snapshotColumns = this.db.prepare('PRAGMA table_info(snapshots)').all() as Array<{ name: string }>;
     if (!snapshotColumns.some(column => column.name === 'page_title')) this.db.exec('ALTER TABLE snapshots ADD COLUMN page_title TEXT');
     this.db.exec("UPDATE jobs SET archive_reason='manual', archive_seen_at=COALESCE(archive_seen_at, updated_at) WHERE status='archived' AND archive_reason IS NULL");
@@ -190,9 +201,30 @@ export class JobDatabase {
       );
       CREATE TABLE IF NOT EXISTS email_records (
         id TEXT PRIMARY KEY, uid_validity TEXT NOT NULL, imap_uid INTEGER NOT NULL, received_at TEXT NOT NULL, body_text TEXT NOT NULL, body_source TEXT NOT NULL DEFAULT 'plain', body_hash TEXT NOT NULL,
+        body_html TEXT, rfc_message_id TEXT, in_reply_to TEXT, references_json TEXT NOT NULL DEFAULT '[]', provider_message_id TEXT, provider_thread_id TEXT,
+        subject TEXT, sender_name TEXT, sender_email TEXT, recipients_json TEXT NOT NULL DEFAULT '[]', direction TEXT NOT NULL DEFAULT 'unknown', original_url TEXT,
         category TEXT, classification_json TEXT, proposed_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, match_status TEXT, review_status TEXT NOT NULL DEFAULT 'pending_review', review_action TEXT, unresolved_reason TEXT, initial_import INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(uid_validity, imap_uid));
       CREATE INDEX IF NOT EXISTS email_records_review ON email_records(review_status, received_at DESC);
+      CREATE TABLE IF NOT EXISTS email_locations (
+        id TEXT PRIMARY KEY, email_id TEXT NOT NULL REFERENCES email_records(id) ON DELETE CASCADE, mailbox TEXT NOT NULL DEFAULT '',
+        uid_validity TEXT NOT NULL, imap_uid INTEGER NOT NULL, first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
+        UNIQUE(uid_validity, imap_uid));
+      CREATE INDEX IF NOT EXISTS email_locations_email ON email_locations(email_id);
+      CREATE TABLE IF NOT EXISTS email_threads (
+        id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS email_thread_keys (
+        thread_id TEXT NOT NULL REFERENCES email_threads(id) ON DELETE CASCADE, kind TEXT NOT NULL, value TEXT NOT NULL, created_at TEXT NOT NULL,
+        PRIMARY KEY(kind, value));
+      CREATE INDEX IF NOT EXISTS email_thread_keys_thread ON email_thread_keys(thread_id);
+      CREATE TABLE IF NOT EXISTS email_thread_messages (
+        thread_id TEXT NOT NULL REFERENCES email_threads(id) ON DELETE CASCADE, email_id TEXT NOT NULL REFERENCES email_records(id) ON DELETE CASCADE,
+        link_method TEXT NOT NULL, linked_at TEXT NOT NULL, PRIMARY KEY(email_id));
+      CREATE INDEX IF NOT EXISTS email_thread_messages_thread ON email_thread_messages(thread_id);
+      CREATE TABLE IF NOT EXISTS outreach_conversation_threads (
+        record_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, thread_id TEXT NOT NULL REFERENCES email_threads(id) ON DELETE CASCADE,
+        link_method TEXT NOT NULL, linked_at TEXT NOT NULL, PRIMARY KEY(thread_id));
+      CREATE INDEX IF NOT EXISTS outreach_conversation_threads_record ON outreach_conversation_threads(record_id);
       CREATE TABLE IF NOT EXISTS email_effects (
         id TEXT PRIMARY KEY, email_id TEXT NOT NULL REFERENCES email_records(id) ON DELETE CASCADE, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
         previous_status TEXT NOT NULL, previous_result_outcome TEXT, next_status TEXT NOT NULL, next_result_outcome TEXT, automatic INTEGER NOT NULL, applied_at TEXT NOT NULL, reverted_at TEXT,
@@ -224,6 +256,26 @@ export class JobDatabase {
     const emailColumns = this.db.prepare('PRAGMA table_info(email_records)').all() as Array<{ name: string }>;
     if (!emailColumns.some(column => column.name === 'body_source')) this.db.exec("ALTER TABLE email_records ADD COLUMN body_source TEXT NOT NULL DEFAULT 'plain'");
     if (!emailColumns.some(column => column.name === 'review_action')) this.db.exec('ALTER TABLE email_records ADD COLUMN review_action TEXT');
+    if (!emailColumns.some(column => column.name === 'body_html')) this.db.exec('ALTER TABLE email_records ADD COLUMN body_html TEXT');
+    if (!emailColumns.some(column => column.name === 'rfc_message_id')) this.db.exec('ALTER TABLE email_records ADD COLUMN rfc_message_id TEXT');
+    if (!emailColumns.some(column => column.name === 'in_reply_to')) this.db.exec('ALTER TABLE email_records ADD COLUMN in_reply_to TEXT');
+    if (!emailColumns.some(column => column.name === 'references_json')) this.db.exec("ALTER TABLE email_records ADD COLUMN references_json TEXT NOT NULL DEFAULT '[]'");
+    if (!emailColumns.some(column => column.name === 'provider_message_id')) this.db.exec('ALTER TABLE email_records ADD COLUMN provider_message_id TEXT');
+    if (!emailColumns.some(column => column.name === 'provider_thread_id')) this.db.exec('ALTER TABLE email_records ADD COLUMN provider_thread_id TEXT');
+    if (!emailColumns.some(column => column.name === 'subject')) this.db.exec('ALTER TABLE email_records ADD COLUMN subject TEXT');
+    if (!emailColumns.some(column => column.name === 'sender_name')) this.db.exec('ALTER TABLE email_records ADD COLUMN sender_name TEXT');
+    if (!emailColumns.some(column => column.name === 'sender_email')) this.db.exec('ALTER TABLE email_records ADD COLUMN sender_email TEXT');
+    if (!emailColumns.some(column => column.name === 'recipients_json')) this.db.exec("ALTER TABLE email_records ADD COLUMN recipients_json TEXT NOT NULL DEFAULT '[]'");
+    if (!emailColumns.some(column => column.name === 'direction')) this.db.exec("ALTER TABLE email_records ADD COLUMN direction TEXT NOT NULL DEFAULT 'unknown'");
+    if (!emailColumns.some(column => column.name === 'original_url')) this.db.exec('ALTER TABLE email_records ADD COLUMN original_url TEXT');
+    this.db.exec("UPDATE email_records SET references_json='[]' WHERE references_json IS NULL OR json_valid(references_json)=0");
+    this.db.exec("UPDATE email_records SET recipients_json='[]' WHERE recipients_json IS NULL OR json_valid(recipients_json)=0");
+    this.db.exec("UPDATE email_records SET direction='unknown' WHERE direction IS NULL OR direction NOT IN ('incoming','outgoing','unknown')");
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS email_records_rfc_message_id ON email_records(rfc_message_id) WHERE rfc_message_id IS NOT NULL AND TRIM(rfc_message_id) <> '';");
+    this.db.exec(`INSERT OR IGNORE INTO email_locations (id,email_id,mailbox,uid_validity,imap_uid,first_seen_at,last_seen_at)
+      SELECT lower(hex(randomblob(16))), id,
+        CASE WHEN instr(uid_validity, char(31)) > 0 THEN substr(uid_validity, 1, instr(uid_validity, char(31)) - 1) ELSE '' END,
+        uid_validity, imap_uid, created_at, updated_at FROM email_records`);
     this.db.exec("UPDATE jobs SET status='archived', archive_reason=CASE WHEN EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id AND email_effects.automatic=1) THEN 'email_exact' ELSE 'email_review' END, archive_seen_at=updated_at WHERE status='result' AND result_outcome='rejected' AND EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id)");
   }
   import(parsed: ParsedJob, raw: { html: string; text: string | null; collectorVersion: string; capturedAt: string; pageTitle?: string }) {
@@ -253,6 +305,13 @@ export class JobDatabase {
     }
     this.db.prepare('INSERT INTO snapshots (id,job_id,source,source_url,content_type,page_title,raw_html,raw_text,collector_version,parser_version,parse_status,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, parsed.source, parsed.sourceUrl, 'job', raw.pageTitle ?? null, raw.html, raw.text, raw.collectorVersion, parsed.parserVersion, parsed.parseStatus, raw.capturedAt, now);
     return { jobId, action };
+  }
+  createOutreachRecord(input: { company?: string | null; contact_name?: string | null; contact_email?: string | null; summary?: string | null; notes?: string; occurred_at?: string }) {
+    const id = crypto.randomUUID(); const occurredAt = input.occurred_at ?? new Date().toISOString();
+    this.db.prepare(`INSERT INTO jobs (id,record_type,source,source_job_id,source_url,title,company,outreach_contact_name,outreach_contact_email,outreach_summary,outreach_summary_edited,status,notes,captured_at,created_at,updated_at,last_activity_at,parse_status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, 'cold_outreach', 'cold_outreach', id, '', null, input.company?.trim() || null, input.contact_name?.trim() || null, input.contact_email?.trim().toLowerCase() || null, input.summary?.trim() || null, input.summary?.trim() ? 1 : 0, 'saved', input.notes ?? '', occurredAt, occurredAt, occurredAt, occurredAt, 'not_applicable');
+    this.insertEvent(id, 'saved', occurredAt);
+    return this.get(id)!;
   }
   list(filters: { search?: string; status?: string; source?: string; company?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; job_id?: string | string[]; order?: string; archive?: string; inactive?: string }) {
     const where: string[] = []; const values: unknown[] = [];
@@ -324,17 +383,17 @@ export class JobDatabase {
       LIMIT ?`).all(inactiveModifier, term, term, term, inactiveModifier, cappedLimit) as Array<Pick<JobRow, 'id' | 'title' | 'company' | 'location' | 'status'> & { is_inactive: number }>;
   }
   jobOptions() {
-    return this.db.prepare("SELECT id, company, title, status FROM jobs ORDER BY CASE WHEN status='archived' THEN 1 ELSE 0 END, captured_at DESC").all() as Array<Pick<JobRow, 'id' | 'company' | 'title' | 'status'>>;
+    return this.db.prepare("SELECT id, company, title, status FROM jobs WHERE record_type='application' ORDER BY CASE WHEN status='archived' THEN 1 ELSE 0 END, captured_at DESC").all() as Array<Pick<JobRow, 'id' | 'company' | 'title' | 'status'>>;
   }
-  currentInterviewProcesses() { return this.db.prepare("SELECT id, interview_stage FROM jobs WHERE status='interview' ORDER BY last_activity_at DESC").all() as Array<Pick<JobRow, 'id' | 'interview_stage'>>; }
-  countryFilters() { return this.db.prepare("SELECT geo_country AS name, geo_country_code AS code FROM jobs WHERE status != 'archived' GROUP BY geo_country, geo_country_code ORDER BY COALESCE(geo_country, '') COLLATE NOCASE ASC").all() as Array<{ name: string | null; code: string | null }>; }
-  languageFilters() { return this.db.prepare("SELECT posting_language_code AS code FROM jobs WHERE status != 'archived' GROUP BY posting_language_code ORDER BY COALESCE(posting_language_code, '') COLLATE NOCASE ASC").all() as Array<{ code: string | null }>; }
+  currentInterviewProcesses() { return this.db.prepare("SELECT id, interview_stage FROM jobs WHERE record_type='application' AND status='interview' ORDER BY last_activity_at DESC").all() as Array<Pick<JobRow, 'id' | 'interview_stage'>>; }
+  countryFilters() { return this.db.prepare("SELECT geo_country AS name, geo_country_code AS code FROM jobs WHERE record_type='application' AND status != 'archived' GROUP BY geo_country, geo_country_code ORDER BY COALESCE(geo_country, '') COLLATE NOCASE ASC").all() as Array<{ name: string | null; code: string | null }>; }
+  languageFilters() { return this.db.prepare("SELECT posting_language_code AS code FROM jobs WHERE record_type='application' AND status != 'archived' GROUP BY posting_language_code ORDER BY COALESCE(posting_language_code, '') COLLATE NOCASE ASC").all() as Array<{ code: string | null }>; }
   geographyBackfillCandidates(options: { includeArchived?: boolean; limit?: number } = {}) {
     const archiveClause = options.includeArchived ? '' : "AND status != 'archived'";
     const limit = Math.max(1, Math.min(options.limit ?? 10_000, 100_000));
     return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type IN (${hiringStageEventSql})), jobs.created_at) AS last_event_at,
       CASE jobs.status WHEN 'saved' THEN jobs.created_at ELSE COALESCE(jobs.updated_at, jobs.created_at) END AS stage_started_at
-      FROM jobs WHERE (posting_language_code IS NULL OR (geo_source IS NULL AND geo_country_code IS NULL AND geo_country IS NULL AND geo_region IS NULL AND geo_city IS NULL))
+      FROM jobs WHERE record_type='application' AND (posting_language_code IS NULL OR (geo_source IS NULL AND geo_country_code IS NULL AND geo_country IS NULL AND geo_region IS NULL AND geo_city IS NULL))
       AND (COALESCE(location, '') <> '' OR COALESCE(description_text, '') <> '') ${archiveClause}
       ORDER BY created_at ASC LIMIT ?`).all(limit) as JobRow[];
   }
@@ -343,7 +402,7 @@ export class JobDatabase {
     const limit = Math.max(1, Math.min(options.limit ?? 10_000, 100_000));
     return this.db.prepare(`SELECT jobs.*, COALESCE((SELECT MAX(occurred_at) FROM job_events WHERE job_id = jobs.id AND type IN (${hiringStageEventSql})), jobs.created_at) AS last_event_at,
       CASE jobs.status WHEN 'saved' THEN jobs.created_at ELSE COALESCE(jobs.updated_at, jobs.created_at) END AS stage_started_at
-      FROM jobs WHERE COALESCE(TRIM(description_text), '') <> '' ${archiveClause}
+      FROM jobs WHERE record_type='application' AND COALESCE(TRIM(description_text), '') <> '' ${archiveClause}
       ORDER BY created_at ASC LIMIT ?`).all(limit) as JobRow[];
   }
   setPostingLanguage(id: string, languageCode: string) {
@@ -360,10 +419,10 @@ export class JobDatabase {
     FROM jobs WHERE id=?`).get(id) as JobRow | undefined; }
   events(id: string) { return this.db.prepare('SELECT * FROM job_events WHERE job_id=? ORDER BY occurred_at DESC, created_at DESC').all(id) as JobEventRow[]; }
   private applicationDates() { return this.db.prepare(`WITH applications AS (
-    SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id
+    SELECT job_events.job_id, MIN(job_events.occurred_at) AS applied_at FROM job_events JOIN jobs ON jobs.id=job_events.job_id WHERE job_events.type='applied' AND jobs.record_type='application' GROUP BY job_events.job_id
     UNION ALL
     SELECT jobs.id, jobs.created_at FROM jobs
-    WHERE NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
+    WHERE jobs.record_type='application' AND NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
       AND (jobs.status IN ('sent','interview','result') OR jobs.result_outcome IS NOT NULL
         OR EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening','interview','final_interview','follow_up','rejection_received')))
   ) SELECT job_id, applied_at FROM applications ORDER BY applied_at`).all() as Array<{ job_id: string; applied_at: string }>; }
@@ -381,11 +440,11 @@ export class JobDatabase {
     const values: string[] = []; const where: string[] = [];
     if (from && to) { const range = utcRangeForLocalDays(from, to, timeZone); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(range.start, range.end); }
     const rows = this.db.prepare(`WITH applications AS (
-      SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id
+      SELECT job_events.job_id, MIN(job_events.occurred_at) AS applied_at FROM job_events JOIN jobs ON jobs.id=job_events.job_id WHERE job_events.type='applied' AND jobs.record_type='application' GROUP BY job_events.job_id
       UNION ALL
       SELECT jobs.id, jobs.created_at
       FROM jobs
-      WHERE NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
+      WHERE jobs.record_type='application' AND NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
         AND (jobs.status IN ('sent','interview','result') OR jobs.result_outcome IS NOT NULL
           OR EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening','interview','final_interview','follow_up','rejection_received')))
     ), response_candidates AS (
@@ -427,11 +486,11 @@ export class JobDatabase {
     const values: string[] = []; const where: string[] = [];
     if (from && to) { const range = utcRangeForLocalDays(from, to, timeZone); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(range.start, range.end); }
     const rows = this.db.prepare(`WITH applications AS (
-      SELECT job_id, MIN(occurred_at) AS applied_at FROM job_events WHERE type='applied' GROUP BY job_id
+      SELECT job_events.job_id, MIN(job_events.occurred_at) AS applied_at FROM job_events JOIN jobs ON jobs.id=job_events.job_id WHERE job_events.type='applied' AND jobs.record_type='application' GROUP BY job_events.job_id
       UNION ALL
       SELECT jobs.id, COALESCE((SELECT MIN(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up')), jobs.created_at)
       FROM jobs
-      WHERE (jobs.status IN ('sent', 'interview', 'result') OR jobs.result_outcome IS NOT NULL
+      WHERE jobs.record_type='application' AND (jobs.status IN ('sent', 'interview', 'result') OR jobs.result_outcome IS NOT NULL
         OR (jobs.status='archived' AND EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening', 'interview', 'final_interview', 'follow_up'))))
         AND NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
     ) SELECT jobs.id, jobs.source, jobs.geo_country_code, jobs.geo_country, jobs.geo_city, jobs.location, jobs.posting_language_code, (SELECT classification FROM job_match_analyses WHERE job_id=jobs.id AND status='completed' ORDER BY completed_at DESC LIMIT 1) AS ai_classification, CASE WHEN jobs.result_outcome IS NOT NULL THEN jobs.result_outcome WHEN jobs.status='archived' THEN 'rejected' ELSE NULL END AS result_outcome, applications.applied_at
@@ -450,11 +509,11 @@ export class JobDatabase {
     const values: string[] = []; const where: string[] = [];
     if (from && to) { const range = utcRangeForLocalDays(from, to, timeZone); where.push('applications.applied_at >= ?', 'applications.applied_at < ?'); values.push(range.start, range.end); }
     return this.db.prepare(`WITH applications AS (
-      SELECT job_id, MIN(occurred_at) AS applied_at, 'applied_event' AS application_date_source FROM job_events WHERE type='applied' GROUP BY job_id
+      SELECT job_events.job_id, MIN(job_events.occurred_at) AS applied_at, 'applied_event' AS application_date_source FROM job_events JOIN jobs ON jobs.id=job_events.job_id WHERE job_events.type='applied' AND jobs.record_type='application' GROUP BY job_events.job_id
       UNION ALL
       SELECT jobs.id, jobs.created_at AS applied_at, 'created_at' AS application_date_source
       FROM jobs
-      WHERE NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
+      WHERE jobs.record_type='application' AND NOT EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type='applied')
         AND (jobs.status IN ('sent','interview','result') OR jobs.result_outcome IS NOT NULL
           OR EXISTS (SELECT 1 FROM job_events WHERE job_id=jobs.id AND type IN ('hr_screening','interview','final_interview','follow_up','rejection_received')))
     ) SELECT jobs.id, applications.applied_at, applications.application_date_source,
@@ -470,7 +529,7 @@ export class JobDatabase {
   }
   cohortMissingApplicationDate() { return 0; }
   strategyCohorts(from?: string, to?: string, timeZone = 'UTC') { const rows = this.cohortApplications(from, to, timeZone).map(row => ({ id: row.id, appliedAt: row.applied_at, applicationDateEstimated: row.application_date_source !== 'applied_event', firstResponseEventAt: row.first_response_event_at, firstResponseEmailAt: row.first_response_email_at, firstHrEventAt: row.first_hr_event_at, firstHrEmailAt: row.first_hr_email_at, hasUndatedHrProgression: Boolean(row.has_undated_hr_progression) })); return calculateCohortAnalytics(rows, { asOf: new Date(), missingApplicationDate: this.cohortMissingApplicationDate() }); }
-  jobCounts() { return this.db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status='archived' THEN 1 ELSE 0 END) AS archived FROM jobs").get() as { total: number; archived: number | null }; }
+  jobCounts() { return this.db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status='archived' THEN 1 ELSE 0 END) AS archived FROM jobs WHERE record_type='application'").get() as { total: number; archived: number | null }; }
   private insertEvent(jobId: string, type: JobEventType, occurredAt: string, note = '') { this.db.prepare('INSERT INTO job_events (id,job_id,type,occurred_at,note,created_at) VALUES (?,?,?,?,?,?)').run(crypto.randomUUID(), jobId, type, occurredAt, note, new Date().toISOString()); if (hiringStageEventSet.has(type)) this.db.prepare('UPDATE jobs SET last_activity_at=MAX(COALESCE(last_activity_at, created_at), ?) WHERE id=?').run(occurredAt, jobId); }
   appointments(jobId: string) { return this.db.prepare("SELECT * FROM interview_appointments WHERE job_id=? ORDER BY CASE status WHEN 'cancelled' THEN 1 ELSE 0 END, starts_at ASC").all(jobId) as InterviewAppointmentRow[]; }
   nextAppointment(jobId: string) { const now = new Date().toISOString(); return this.db.prepare("SELECT * FROM interview_appointments WHERE job_id=? AND status IN ('proposed', 'confirmed') ORDER BY CASE WHEN starts_at >= ? THEN 0 ELSE 1 END, CASE WHEN starts_at >= ? THEN starts_at END ASC, CASE WHEN starts_at < ? THEN starts_at END DESC LIMIT 1").get(jobId, now, now, now) as InterviewAppointmentRow | undefined; }
@@ -727,10 +786,15 @@ export class JobDatabase {
   resetSyncState(mailbox: string, uidValidity: string) { this.saveSyncState(mailbox, uidValidity, 0); }
   acquireImapSyncLease(milliseconds = 10 * 60_000) { const now = new Date(); const until = new Date(now.getTime() + milliseconds).toISOString(); return this.db.prepare("UPDATE imap_sync_lock SET locked_until=? WHERE id=1 AND (locked_until IS NULL OR locked_until < ?)").run(until, now.toISOString()).changes > 0; }
   releaseImapSyncLease() { this.db.prepare('UPDATE imap_sync_lock SET locked_until=NULL WHERE id=1').run(); }
-  hasEmail(uidValidity: string, uid: number) { return Boolean(this.db.prepare('SELECT 1 FROM email_records WHERE uid_validity=? AND imap_uid=?').get(uidValidity, uid)); }
-  saveEmail(input: Omit<EmailRecordRow, 'id' | 'created_at' | 'updated_at' | 'job_title' | 'job_company' | 'body_source' | 'review_action'> & Partial<Pick<EmailRecordRow, 'body_source' | 'review_action'>>) {
+  hasEmail(uidValidity: string, uid: number) { return Boolean(this.db.prepare('SELECT 1 FROM email_locations WHERE uid_validity=? AND imap_uid=?').get(uidValidity, uid) ?? this.db.prepare('SELECT 1 FROM email_records WHERE uid_validity=? AND imap_uid=?').get(uidValidity, uid)); }
+  saveEmail(input: Omit<EmailRecordRow, 'id' | 'created_at' | 'updated_at' | 'job_title' | 'job_company' | 'reversible_effect' | 'body_source' | 'review_action' | 'body_html' | 'rfc_message_id' | 'in_reply_to' | 'references_json' | 'provider_message_id' | 'provider_thread_id' | 'subject' | 'sender_name' | 'sender_email' | 'recipients_json' | 'direction' | 'original_url'> & Partial<Pick<EmailRecordRow, 'body_source' | 'review_action' | 'body_html' | 'rfc_message_id' | 'in_reply_to' | 'references_json' | 'provider_message_id' | 'provider_thread_id' | 'subject' | 'sender_name' | 'sender_email' | 'recipients_json' | 'direction' | 'original_url'>>) {
     const now = new Date().toISOString(); const id = crypto.randomUUID();
-    this.db.prepare('INSERT INTO email_records (id,uid_validity,imap_uid,received_at,body_text,body_source,body_hash,category,classification_json,proposed_job_id,match_status,review_status,review_action,unresolved_reason,initial_import,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, input.uid_validity, input.imap_uid, input.received_at, input.body_text, input.body_source ?? 'plain', input.body_hash, input.category, input.classification_json, input.proposed_job_id, input.match_status, input.review_status, input.review_action ?? null, input.unresolved_reason, input.initial_import, now, now);
+    const save = this.db.transaction(() => {
+      this.db.prepare('INSERT INTO email_records (id,uid_validity,imap_uid,received_at,body_text,body_html,body_source,body_hash,rfc_message_id,in_reply_to,references_json,provider_message_id,provider_thread_id,subject,sender_name,sender_email,recipients_json,direction,original_url,category,classification_json,proposed_job_id,match_status,review_status,review_action,unresolved_reason,initial_import,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, input.uid_validity, input.imap_uid, input.received_at, input.body_text, input.body_html ?? null, input.body_source ?? 'plain', input.body_hash, input.rfc_message_id ?? null, input.in_reply_to ?? null, input.references_json ?? '[]', input.provider_message_id ?? null, input.provider_thread_id ?? null, input.subject ?? null, input.sender_name ?? null, input.sender_email ?? null, input.recipients_json ?? '[]', input.direction ?? 'unknown', input.original_url ?? null, input.category, input.classification_json, input.proposed_job_id, input.match_status, input.review_status, input.review_action ?? null, input.unresolved_reason, input.initial_import, now, now);
+      const separator = input.uid_validity.indexOf('\u001f'); const mailbox = separator >= 0 ? input.uid_validity.slice(0, separator) : '';
+      this.db.prepare('INSERT INTO email_locations (id,email_id,mailbox,uid_validity,imap_uid,first_seen_at,last_seen_at) VALUES (?,?,?,?,?,?,?)').run(crypto.randomUUID(), id, mailbox, input.uid_validity, input.imap_uid, now, now);
+    });
+    save();
     return this.email(id)!;
   }
   email(id: string) { return this.db.prepare("SELECT email_records.*, jobs.title AS job_title, jobs.company AS job_company, CASE WHEN email_records.review_status='applied' THEN 1 ELSE 0 END AS reversible_effect FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id WHERE email_records.id=?").get(id) as EmailRecordRow | undefined; }
@@ -853,7 +917,7 @@ export class JobDatabase {
   updateBackupSyncStatus(input: { status: string; error?: string | null }) { const now = new Date().toISOString(); this.db.prepare('UPDATE backup_settings SET last_sync_at=?, last_sync_status=?, last_error=? WHERE id=1').run(now, input.status, input.error?.slice(0, 500) ?? null); return this.backupSettings(); }
   portableBackup() {
     const select = (table: string) => this.db.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[];
-    return { schema_version: 1, exported_at: new Date().toISOString(), data: { jobs: select('jobs'), snapshots: select('snapshots'), job_events: select('job_events'), interview_appointments: select('interview_appointments'), tags: select('tags'), job_tags: select('job_tags'), job_match_analyses: select('job_match_analyses'), ai_strategy_analyses: select('ai_strategy_analyses'), email_records: select('email_records'), email_effects: select('email_effects'), ai_providers: this.db.prepare('SELECT id, provider_type, display_name, base_url, requests_per_minute, tokens_per_minute, 0 AS enabled, NULL AS profile_consent_at, created_at, updated_at FROM ai_providers').all(), ai_provider_connections: this.db.prepare('SELECT id, provider_id, sort_order, provider_type, display_name, base_url, model, temperature, max_output_tokens, timeout_ms, requests_per_minute, tokens_per_minute, 0 AS enabled, created_at, updated_at FROM ai_provider_connections').all(), ai_function_routes: select('ai_function_routes'), ai_settings: select('ai_settings'), imap_settings: this.db.prepare('SELECT id, host, port, tls_mode, username, mailbox, enabled, sync_interval_minutes, initial_sync_days, rejection_handling, ai_consent_at, last_sync_at, last_sync_status, last_error, processed_count, rejection_count, review_count, updated_at FROM imap_settings').all() } };
+    return { schema_version: 1, exported_at: new Date().toISOString(), data: { jobs: select('jobs'), snapshots: select('snapshots'), job_events: select('job_events'), interview_appointments: select('interview_appointments'), tags: select('tags'), job_tags: select('job_tags'), job_match_analyses: select('job_match_analyses'), ai_strategy_analyses: select('ai_strategy_analyses'), email_records: select('email_records'), email_locations: select('email_locations'), email_threads: select('email_threads'), email_thread_keys: select('email_thread_keys'), email_thread_messages: select('email_thread_messages'), outreach_conversation_threads: select('outreach_conversation_threads'), email_effects: select('email_effects'), ai_providers: this.db.prepare('SELECT id, provider_type, display_name, base_url, requests_per_minute, tokens_per_minute, 0 AS enabled, NULL AS profile_consent_at, created_at, updated_at FROM ai_providers').all(), ai_provider_connections: this.db.prepare('SELECT id, provider_id, sort_order, provider_type, display_name, base_url, model, temperature, max_output_tokens, timeout_ms, requests_per_minute, tokens_per_minute, 0 AS enabled, created_at, updated_at FROM ai_provider_connections').all(), ai_function_routes: select('ai_function_routes'), ai_settings: select('ai_settings'), imap_settings: this.db.prepare('SELECT id, host, port, tls_mode, username, mailbox, enabled, sync_interval_minutes, initial_sync_days, rejection_handling, ai_consent_at, last_sync_at, last_sync_status, last_error, processed_count, rejection_count, review_count, updated_at FROM imap_settings').all() } };
   }
   sheetSyncPayload() {
     const jobs = this.db.prepare(`SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.source, jobs.source_url, jobs.status, jobs.interview_stage, jobs.application_id, jobs.result_outcome, jobs.archive_reason, jobs.captured_at, jobs.created_at, jobs.updated_at, (SELECT MAX(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN (${hiringStageEventSql})) AS last_event_at, GROUP_CONCAT(tags.name, ', ') AS tags FROM jobs LEFT JOIN job_tags ON job_tags.job_id=jobs.id LEFT JOIN tags ON tags.id=job_tags.tag_id GROUP BY jobs.id ORDER BY jobs.created_at DESC`).all();
@@ -863,11 +927,11 @@ export class JobDatabase {
     return { schema_version: 1, exported_at: new Date().toISOString(), sheets: { Jobs: jobs, Events: events, Tags: tags, Emails: emails } };
   }
   csvJobs() { return this.db.prepare("SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.source, jobs.source_url, jobs.status, jobs.interview_stage, jobs.result_outcome, jobs.archive_reason, jobs.created_at, jobs.updated_at, GROUP_CONCAT(tags.name, ', ') AS tags FROM jobs LEFT JOIN job_tags ON job_tags.job_id=jobs.id LEFT JOIN tags ON tags.id=job_tags.tag_id GROUP BY jobs.id ORDER BY jobs.created_at DESC").all() as Array<Record<string, string | null>>; }
-  restorePortableBackup(data: { jobs: Record<string, unknown>[]; snapshots: Record<string, unknown>[]; job_events: Record<string, unknown>[]; interview_appointments?: Record<string, unknown>[]; tags: Record<string, unknown>[]; job_tags: Record<string, unknown>[]; job_match_analyses: Record<string, unknown>[]; ai_strategy_analyses?: Record<string, unknown>[]; email_records: Record<string, unknown>[]; email_effects: Record<string, unknown>[]; ai_providers?: Record<string, unknown>[]; ai_provider_connections?: Record<string, unknown>[]; ai_function_routes?: Record<string, unknown>[] }) {
+  restorePortableBackup(data: { jobs: Record<string, unknown>[]; snapshots: Record<string, unknown>[]; job_events: Record<string, unknown>[]; interview_appointments?: Record<string, unknown>[]; tags: Record<string, unknown>[]; job_tags: Record<string, unknown>[]; job_match_analyses: Record<string, unknown>[]; ai_strategy_analyses?: Record<string, unknown>[]; email_records: Record<string, unknown>[]; email_locations?: Record<string, unknown>[]; email_threads?: Record<string, unknown>[]; email_thread_keys?: Record<string, unknown>[]; email_thread_messages?: Record<string, unknown>[]; outreach_conversation_threads?: Record<string, unknown>[]; email_effects: Record<string, unknown>[]; ai_providers?: Record<string, unknown>[]; ai_provider_connections?: Record<string, unknown>[]; ai_function_routes?: Record<string, unknown>[] }) {
     const tableColumns = (table: string) => new Set((this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name));
     const insertRows = (table: string, rows: Record<string, unknown>[], mode: 'insert' | 'ignore' | 'replace' = 'insert') => { const allowed = tableColumns(table); for (const row of rows) { const columns = Object.keys(row).filter(column => allowed.has(column)); if (!columns.length) continue; const values = columns.map(column => row[column]); const conflict = mode === 'ignore' ? 'OR IGNORE ' : mode === 'replace' ? 'OR REPLACE ' : ''; this.db.prepare(`INSERT ${conflict}INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...values); } };
     const transaction = this.db.transaction(() => {
-      this.db.exec('DELETE FROM email_effects; DELETE FROM email_records; DELETE FROM interview_appointments; DELETE FROM job_match_analyses; DELETE FROM ai_strategy_analyses; DELETE FROM snapshots; DELETE FROM job_events; DELETE FROM job_tags; DELETE FROM jobs; DELETE FROM tags;');
+      this.db.exec('DELETE FROM email_effects; DELETE FROM outreach_conversation_threads; DELETE FROM email_thread_messages; DELETE FROM email_thread_keys; DELETE FROM email_threads; DELETE FROM email_locations; DELETE FROM email_records; DELETE FROM interview_appointments; DELETE FROM job_match_analyses; DELETE FROM ai_strategy_analyses; DELETE FROM snapshots; DELETE FROM job_events; DELETE FROM job_tags; DELETE FROM jobs; DELETE FROM tags;');
       const providerRows = (data.ai_providers ?? []).map(row => ({ ...row, encrypted_api_key: '', enabled: 0, profile_consent_at: null }));
       insertRows('ai_providers', providerRows, 'ignore');
       const models = (data.ai_provider_connections ?? []).map(row => {
@@ -878,7 +942,7 @@ export class JobDatabase {
       });
       insertRows('ai_provider_connections', models, 'ignore');
       insertRows('ai_function_routes', data.ai_function_routes ?? [], 'replace');
-      insertRows('tags', data.tags); insertRows('jobs', data.jobs); insertRows('job_tags', data.job_tags); insertRows('snapshots', data.snapshots); insertRows('job_events', data.job_events); insertRows('job_match_analyses', data.job_match_analyses); insertRows('ai_strategy_analyses', data.ai_strategy_analyses ?? []); insertRows('email_records', data.email_records); insertRows('interview_appointments', data.interview_appointments ?? []); insertRows('email_effects', data.email_effects);
+      insertRows('tags', data.tags); insertRows('jobs', data.jobs); insertRows('job_tags', data.job_tags); insertRows('snapshots', data.snapshots); insertRows('job_events', data.job_events); insertRows('job_match_analyses', data.job_match_analyses); insertRows('ai_strategy_analyses', data.ai_strategy_analyses ?? []); insertRows('email_records', data.email_records); insertRows('email_locations', data.email_locations ?? []); this.db.exec(`INSERT OR IGNORE INTO email_locations (id,email_id,mailbox,uid_validity,imap_uid,first_seen_at,last_seen_at) SELECT lower(hex(randomblob(16))), id, CASE WHEN instr(uid_validity, char(31)) > 0 THEN substr(uid_validity, 1, instr(uid_validity, char(31)) - 1) ELSE '' END, uid_validity, imap_uid, created_at, updated_at FROM email_records`); insertRows('email_threads', data.email_threads ?? []); insertRows('email_thread_keys', data.email_thread_keys ?? []); insertRows('email_thread_messages', data.email_thread_messages ?? []); insertRows('outreach_conversation_threads', data.outreach_conversation_threads ?? []); insertRows('interview_appointments', data.interview_appointments ?? []); insertRows('email_effects', data.email_effects);
     });
     transaction(); return { jobs: data.jobs.length, snapshots: data.snapshots.length, events: data.job_events.length, interviews: data.interview_appointments?.length ?? 0, tags: data.tags.length, emails: data.email_records.length };
   }
