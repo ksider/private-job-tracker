@@ -75,6 +75,22 @@ describe('email sync foundations', () => {
     db.revertEmailEffect(email.id); expect(db.email(email.id)).toMatchObject({ review_status: 'pending_review', unresolved_reason: 'reverted_action', reversible_effect: 0 }); expect(db.get(imported.jobId)).toMatchObject({ status: 'saved' });
     db.db.close();
   });
+  it('links multiple emails to the same archived vacancy without replacing the first link', () => {
+    const db = new JobDatabase(':memory:'); const now = '2026-10-22T12:00:00.000Z';
+    const imported = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/multiple-emails', title: 'Process Engineer', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: now });
+    const rejection = db.saveEmail({ uid_validity: 'multiple', imap_uid: 1, received_at: now, body_text: 'Unfortunately, we will not continue.', body_hash: 'multiple-rejection', category: 'rejection', classification_json: '{}', proposed_job_id: imported.jobId, match_status: 'exact', review_status: 'pending_review', unresolved_reason: null, initial_import: 0 });
+    db.confirmEmail(rejection.id); expect(db.get(imported.jobId)).toMatchObject({ status: 'archived' });
+    const followUp = db.saveEmail({ uid_validity: 'multiple', imap_uid: 2, received_at: '2026-10-23T12:00:00.000Z', body_text: 'Additional process update.', body_hash: 'multiple-follow-up', category: 'other', classification_json: '{}', proposed_job_id: null, match_status: 'no_match', review_status: 'pending_review', unresolved_reason: null, initial_import: 0 });
+    db.confirmEmail(followUp.id, imported.jobId, 'none');
+    expect(db.email(rejection.id)).toMatchObject({ proposed_job_id: imported.jobId, review_status: 'applied' });
+    expect(db.email(followUp.id)).toMatchObject({ proposed_job_id: imported.jobId, review_status: 'applied' });
+    expect(db.db.prepare('SELECT COUNT(*) AS count FROM email_records WHERE proposed_job_id=?').get(imported.jobId)).toEqual({ count: 2 });
+    expect(db.get(imported.jobId)).toMatchObject({ status: 'archived' });
+    db.revertEmailEffect(followUp.id);
+    expect(db.email(rejection.id)).toMatchObject({ proposed_job_id: imported.jobId, review_status: 'applied' });
+    expect(db.get(imported.jobId)).toMatchObject({ status: 'archived' });
+    db.db.close();
+  });
   it('lets a reviewer override the AI category with rejection, interview, or no status change', () => {
     const db = new JobDatabase(':memory:'); const now = '2026-10-22T12:00:00.000Z'; const raw = { html: '<main>Role</main>', text: 'Role', collectorVersion: 'test', capturedAt: now };
     const rejected = db.import({ source: 'generic', sourceUrl: 'https://example.test/jobs/manual-rejection', title: 'Role', company: 'Example', warnings: [], parseStatus: 'parsed', parserVersion: 'test' }, raw);
