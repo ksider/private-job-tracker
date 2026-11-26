@@ -320,6 +320,12 @@ export function buildApp(config: AppConfig) {
     const mailboxes = db.emailMailboxes(email.id); const outreachMailbox = db.imapSettings().outreach_mailbox;
     return { ...email, mailboxes, is_outreach_mailbox: Boolean(outreachMailbox && mailboxes.includes(outreachMailbox)), outreach_candidates: db.outreachCandidatesForEmail(email.id) };
   };
+  const queueOutreachSummary = (recordId: string, emailId: string) => {
+    if (!db.imapSettings().ai_consent_at || !db.functionRoute('outreach_email')?.automatic_enabled) return;
+    void analyzeOutreachEmail({ db, aiRouter, emailId }).then(result => {
+      db.applyOutreachAiDetails(recordId, emailId, outreachEmailAnalysisView(result.analysis));
+    }).catch(error => app.log.warn({ err: error, emailId }, 'Outreach card summary failed after persistence'));
+  };
   app.get('/api/email/review', async () => db.reviewEmails().map(email => emailReviewView(email)!));
   app.get('/api/outreach/options', async () => db.outreachOptions());
   app.get('/api/email/log', async (request) => { const query = request.query as { limit?: string; offset?: string }; return db.emailLog(Number(query.limit), Number(query.offset)); });
@@ -332,8 +338,13 @@ export function buildApp(config: AppConfig) {
   app.post('/api/email/review/:id/outreach-link', async (request, reply) => {
     const checked = z.object({ record_id: z.string().uuid() }).safeParse(request.body ?? {}); if (!checked.success) return reply.code(400).send({ error: 'Select a Cold Outreach record.' });
     const emailId = (request.params as { id: string }).id; if (!db.email(emailId)) return reply.code(404).send({ error: 'Email review item not found' });
-    try { return db.confirmOutreachEmailLink(checked.data.record_id, emailId); }
+    try { const linked = db.confirmOutreachEmailLink(checked.data.record_id, emailId); queueOutreachSummary(checked.data.record_id, emailId); return linked; }
     catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : 'Could not link this email to Cold Outreach.' }); }
+  });
+  app.post('/api/email/review/:id/outreach-create', async (request, reply) => {
+    const emailId = (request.params as { id: string }).id; if (!db.email(emailId)) return reply.code(404).send({ error: 'Email review item not found' });
+    try { const result = db.createOrLinkOutreachForEmail(emailId, db.imapSettings().username); if (!result) return reply.code(409).send({ error: 'This email is already linked to Cold Outreach.' }); queueOutreachSummary(result.record.id, emailId); return result; }
+    catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : 'Could not create a Cold Outreach card.' }); }
   });
   app.post('/api/email/review/:id/classify', async (request, reply) => { try { return await emailSync.classifyExisting((request.params as { id: string }).id); } catch (error) { const message = error instanceof Error ? error.message : 'Email classification failed.'; app.log.warn({ err: error, emailId: (request.params as { id: string }).id }, 'Email classification failed'); return reply.code(message === 'Email review item not found.' ? 404 : 502).send({ error: message.startsWith('AI provider') || message.includes('consent') || message.includes('provider') || message.includes('not found') ? message : 'Email classification failed. Check the server log for details.' }); } });
   app.post('/api/email/review/:id/confirm', async (request, reply) => { const checked = EmailReviewConfirmSchema.safeParse(request.body ?? {}); if (!checked.success) return reply.code(400).send({ error: 'Invalid review decision', details: checked.error.flatten() }); const existing = db.email((request.params as { id: string }).id); if (!existing) return reply.code(404).send({ error: 'Email review item not found' }); const jobId = checked.data.job_id ?? existing.proposed_job_id; if (!jobId) return reply.code(400).send({ error: 'Select a vacancy before confirming this email.' }); try { const classification = existing.classification_json ? EmailClassificationSchema.safeParse(JSON.parse(existing.classification_json)).data : undefined; const inferredAction = classification?.category === 'rejection' ? 'rejection' : classification?.category === 'interview_invitation' ? 'interview' : 'none'; const action = checked.data.action ?? inferredAction; const appointment = action === 'interview' && classification?.category === 'interview_invitation' ? classification.interviewAppointment : null; const item = action === 'interview' ? appointment?.startsAt ? db.confirmInterviewInvitation(existing.id, jobId, { stage: 'interview', starts_at: appointment.startsAt, time_zone: appointment.timeZone, format: appointment.format ?? 'video', meeting_url: appointment.meetingUrl, note: appointment.note ?? '' }) : db.confirmInterview(existing.id, jobId) : db.confirmEmail(existing.id, jobId, action); return item ?? reply.code(404).send({ error: 'Email review item not found' }); } catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : 'Could not confirm email review.' }); } });

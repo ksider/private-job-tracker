@@ -172,8 +172,8 @@ describe('cold outreach data model', () => {
     expect(db.emailMailboxes(folderOnly.id)).toEqual(['Cold Outreach']);
     const autoCreated = db.createOutreachRecordsFromMailbox('Cold Outreach', 'me@example.test');
     expect(autoCreated).toHaveLength(1);
-    expect(autoCreated[0]).toMatchObject({ record_type: 'cold_outreach', outreach_contact_name: 'New contact', outreach_contact_email: 'new.contact@example.test' });
-    expect(db.outreachCandidatesForEmail(folderOnly.id)).toEqual([{ record_id: autoCreated[0].id, match_status: 'exact', reasons: ['linked_thread'] }]);
+    expect(autoCreated[0].record).toMatchObject({ record_type: 'cold_outreach', outreach_contact_name: 'New contact', outreach_contact_email: 'new.contact@example.test', outreach_summary: null });
+    expect(db.outreachCandidatesForEmail(folderOnly.id)).toEqual([{ record_id: autoCreated[0].record.id, match_status: 'exact', reasons: ['linked_thread'] }]);
     db.db.close();
   });
 

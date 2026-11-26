@@ -75,5 +75,8 @@ export type StrategyAdvice = z.infer<typeof StrategyAdviceSchema>;
 
 export const OutreachEmailAnalysisSchema = z.object({
   summary: z.string().trim().min(1).max(360),
+  contact_name: z.string().trim().min(1).max(240).nullable().optional().default(null),
+  contact_email: z.string().trim().email().max(320).nullable().optional().default(null),
+  company: z.string().trim().min(1).max(240).nullable().optional().default(null),
 });
 export type OutreachEmailAnalysis = z.infer<typeof OutreachEmailAnalysisSchema>;

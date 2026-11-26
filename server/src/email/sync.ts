@@ -8,7 +8,7 @@ import { classifyEmail } from './classification.js';
 import { matchEmailToJob } from './matching.js';
 import { EmailClassificationSchema, type ImapSettingsInput } from './schemas.js';
 import { extractEmailText, type EmailTextSource } from './body.js';
-import { analyzeOutreachEmail } from '../ai/outreach-email.js';
+import { analyzeOutreachEmail, outreachEmailAnalysisView } from '../ai/outreach-email.js';
 
 type ImapCredentials = Pick<ImapSettingsRow, 'host' | 'port' | 'tls_mode' | 'username'> & { password: string };
 type SyncResult = { processed: number; rejections: number; reviewItems: number; initialImport: boolean };
@@ -84,7 +84,10 @@ export class EmailSyncService {
       for (const mailboxPath of mailboxes) {
         const result = await this.syncMailbox(client, mailboxPath, settings); processed += result.processed; rejections += result.rejections; reviewItems += result.reviewItems; initialImport ||= result.initialImport;
       }
-      if (settings.outreach_mailbox.trim()) this.db.createOutreachRecordsFromMailbox(settings.outreach_mailbox.trim(), settings.username);
+      if (settings.outreach_mailbox.trim()) {
+        const created = this.db.createOutreachRecordsFromMailbox(settings.outreach_mailbox.trim(), settings.username);
+        if (settings.ai_consent_at && this.db.functionRoute('outreach_email')?.automatic_enabled) for (const item of created) void analyzeOutreachEmail({ db: this.db, aiRouter: this.aiRouter, emailId: item.emailId }).then(result => this.db.applyOutreachAiDetails(item.record.id, item.emailId, outreachEmailAnalysisView(result.analysis))).catch(error => console.warn('[Email sync] outreach card analysis failed after persistence', error));
+      }
       this.db.updateImapSyncStatus({ status: 'ok', processed, rejections, reviews: reviewItems });
       return { processed, rejections, reviewItems, initialImport };
     } finally { await client.logout().catch(() => undefined); }
@@ -139,7 +142,8 @@ export class EmailSyncService {
       saved = this.db.classifyEmail(saved.id, { category: saved.category, classification_json: saved.classification_json, proposed_job_id: saved.proposed_job_id, match_status: saved.match_status, unresolved_reason: 'outreach_candidate', review_status: 'pending_review' })!;
     }
     if (saved.body_source !== 'missing' && settings.ai_consent_at && this.db.functionRoute('outreach_email')?.automatic_enabled && this.db.outreachRecordIdsForEmail(saved.id).length) {
-      void analyzeOutreachEmail({ db: this.db, aiRouter: this.aiRouter, emailId: saved.id }).catch(error => console.warn('[Email sync] outreach email analysis failed after persistence', error));
+      const recordIds = this.db.outreachRecordIdsForEmail(saved.id);
+      void analyzeOutreachEmail({ db: this.db, aiRouter: this.aiRouter, emailId: saved.id }).then(result => { const details = outreachEmailAnalysisView(result.analysis); for (const recordId of recordIds) this.db.applyOutreachAiDetails(recordId.record_id, saved.id, details); }).catch(error => console.warn('[Email sync] outreach email analysis failed after persistence', error));
     }
     const shouldArchive = saved.match_status === 'exact' || (settings.rejection_handling === 'manual_review' && saved.match_status === 'probable');
     if (!input.initialImport && settings.rejection_handling !== 'notifications_only' && saved.category === 'rejection' && shouldArchive) return this.db.autoApplyRejection(saved.id) ?? saved;
