@@ -299,7 +299,7 @@ export function buildApp(config: AppConfig) {
   app.get('/api/jobs/:id/technical', async (request, reply) => {
     const id = (request.params as { id: string }).id; const job = db.get(id); if (!job) return reply.code(404).send({ error: 'Job not found' });
     const technicalJob = { id: job.id, record_type: job.record_type, source: job.source, source_job_id: job.source_job_id, source_url: job.source_url, parse_status: job.parse_status, status: job.status, interview_stage: job.interview_stage, application_id: job.application_id, posting_language_code: job.posting_language_code, geo_source: job.geo_source, outreach_contact_email: job.outreach_contact_email, captured_at: job.captured_at, created_at: job.created_at, updated_at: job.updated_at, last_activity_at: job.last_activity_at };
-    return { job: technicalJob, snapshots: db.snapshotSummaries(id) };
+    return { job: technicalJob, snapshots: db.snapshotSummaries(id), emails: job.record_type === 'cold_outreach' ? db.outreachConversation(id, undefined, 100).messages : [] };
   });
   app.get('/api/jobs/:id/snapshots/:snapshotId', async (request, reply) => {
     const { id, snapshotId } = request.params as { id: string; snapshotId: string }; if (!db.get(id)) return reply.code(404).send({ error: 'Job not found' });
