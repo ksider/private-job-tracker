@@ -220,4 +220,21 @@ describe('cold outreach data model', () => {
     expect(db.get(source.id)).toMatchObject({ status: 'saved' });
     db.db.close();
   });
+
+  it('keeps Outreach events and meetings out of application statistics', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'job-tracker-outreach-stats-')); const databasePath = path.join(directory, 'jobs.sqlite');
+    try {
+      const seed = new JobDatabase(databasePath); const outreach = seed.createOutreachRecord({ company: 'Metrics-safe Co', contact_email: 'contact@example.test', occurred_at: '2026-11-01T10:00:00.000Z' }); seed.db.close();
+      const app = buildApp({ databasePath, apiToken: 'token', aiSecretsKey: '0123456789abcdef' });
+      expect((await app.inject({ method: 'POST', url: `/api/jobs/${outreach.id}/events`, payload: { type: 'outreach_meeting', occurred_at: '2026-11-02T10:00:00.000Z' } })).statusCode).toBe(200);
+      expect((await app.inject({ method: 'POST', url: `/api/jobs/${outreach.id}/interviews`, payload: { starts_at: '2026-11-03T10:00:00.000Z', stage: 'interview', format: 'video' } })).statusCode).toBe(200);
+      const [applications, effectiveness, sankey] = await Promise.all([
+        app.inject({ method: 'GET', url: '/api/stats/applications?from=2026-11-01&to=2026-11-30' }),
+        app.inject({ method: 'GET', url: '/api/stats/effectiveness?from=2026-11-01&to=2026-11-30' }),
+        app.inject({ method: 'GET', url: '/api/stats/sankey?from=2026-11-01&to=2026-11-30' })
+      ]);
+      expect(applications.json()).toMatchObject({ total: 0 }); expect(effectiveness.json()).toMatchObject({ applications: 0 }); expect(sankey.json()).toMatchObject({ applications: 0, counted_applications: 0 });
+      await app.close();
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
 });

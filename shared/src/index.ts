@@ -18,7 +18,7 @@ export const RECORD_STATUS_TRANSITIONS: Record<RecordType, Record<JobStatus, rea
   cold_outreach: recordStatusTransitions()
 };
 export const canTransitionRecordStatus = (recordType: RecordType, from: JobStatus, to: JobStatus) => RECORD_STATUS_TRANSITIONS[recordType][from].includes(to);
-export const JOB_EVENT_TYPES = ['saved', 'applied', 'hr_screening', 'interview', 'final_interview', 'follow_up', 'result', 'email_detected', 'rejection_received', 'email_status_changed'] as const;
+export const JOB_EVENT_TYPES = ['saved', 'applied', 'hr_screening', 'interview', 'final_interview', 'follow_up', 'result', 'email_detected', 'rejection_received', 'email_status_changed', 'outreach_contacted', 'outreach_replied', 'outreach_meeting', 'outreach_follow_up'] as const;
 export type JobEventType = (typeof JOB_EVENT_TYPES)[number];
 export const JobEventTypeSchema = z.enum(JOB_EVENT_TYPES);
 export const INTERVIEW_STAGES = ['hr_screening', 'interview', 'final_interview', 'follow_up'] as const;
