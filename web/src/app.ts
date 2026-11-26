@@ -974,12 +974,15 @@ function renderDetailMeta(job: Job) {
   target.querySelector<HTMLButtonElement>('[data-filter-job-country]')?.addEventListener('click', () => openJobsWithFilter({ country: job.geo_country_code! }));
 }
 function renderOutreachConversation() {
-  const section = $('#detail-conversation'); const participantList = $('#detail-conversation-participants'); const messages = $('#detail-conversation-messages'); const more = $('#detail-conversation-more') as HTMLButtonElement; const analyzeConversation = $('#detail-conversation-analyze') as HTMLButtonElement; const analyzeCard = $('#detail-outreach-card-analyze') as HTMLButtonElement; const mergeCards = $('#detail-outreach-merge') as HTMLButtonElement; const undoMerge = $('#detail-outreach-undo-merge') as HTMLButtonElement;
+  const section = $('#detail-conversation'); const participantList = $('#detail-conversation-participants'); const messages = $('#detail-conversation-messages'); const more = $('#detail-conversation-more') as HTMLButtonElement; const analyzeConversation = $('#detail-conversation-analyze') as HTMLButtonElement; const analyzeCard = $('#detail-outreach-card-analyze') as HTMLButtonElement; const mergeCards = $('#detail-outreach-merge') as HTMLButtonElement; const undoMerge = $('#detail-outreach-undo-merge') as HTMLButtonElement; const headerMerge = $('#detail-outreach-merge-header') as HTMLButtonElement; const headerUndoMerge = $('#detail-outreach-undo-merge-header') as HTMLButtonElement;
   const isOutreach = current?.record_type === 'cold_outreach';
-  section.classList.toggle('hidden', !isOutreach); analyzeConversation.classList.toggle('hidden', !isOutreach); analyzeCard.classList.toggle('hidden', !isOutreach); mergeCards.classList.toggle('hidden', !isOutreach); undoMerge.classList.add('hidden');
+  const iconButton = 'group relative hidden rounded-lg border bg-white p-2 disabled:cursor-wait disabled:opacity-60';
+  analyzeCard.className = `${iconButton} border-violet-300 text-violet-800 hover:bg-violet-50`; analyzeCard.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" class="h-4 w-4 fill-none stroke-current" stroke-width="2"><path d="M12 3v3M12 18v3M4.2 5.2l2.1 2.1M17.7 17.7l2.1 2.1M3 12h3M18 12h3M4.2 18.8l2.1-2.1M17.7 6.3l2.1-2.1"/><circle cx="12" cy="12" r="4"/></svg><span role="tooltip" class="pointer-events-none absolute left-0 top-full z-30 mt-2 w-max rounded-lg bg-gray-900 px-2.5 py-2 text-xs font-normal text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus:opacity-100">Распознать карточку AI</span>';
+  analyzeConversation.className = `${iconButton} border-violet-300 text-violet-800 hover:bg-violet-50`; analyzeConversation.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" class="h-4 w-4 fill-none stroke-current" stroke-width="2"><path d="M4 5h16M4 12h11M4 19h8"/><path d="m17 16 3 3 3-3" transform="translate(-1 -1)"/></svg><span role="tooltip" class="pointer-events-none absolute left-0 top-full z-30 mt-2 w-max rounded-lg bg-gray-900 px-2.5 py-2 text-xs font-normal text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus:opacity-100">Сделать AI-выжимки писем</span>';
+  headerMerge.before(analyzeCard, analyzeConversation); section.classList.toggle('hidden', !isOutreach); analyzeConversation.classList.toggle('hidden', !isOutreach); analyzeCard.classList.toggle('hidden', !isOutreach); mergeCards.classList.add('hidden'); undoMerge.classList.add('hidden'); headerMerge.classList.toggle('hidden', !isOutreach); headerUndoMerge.classList.add('hidden'); headerMerge.onclick = () => mergeCards.click(); headerUndoMerge.onclick = () => undoMerge.click();
   if (!isOutreach) return;
   const recordId = current!.id;
-  void api(`/api/jobs/${recordId}/outreach-merge`).then((result: { latest: { id: string } | null }) => { if (current?.id !== recordId || !result.latest) return; undoMerge.classList.remove('hidden'); undoMerge.onclick = () => { if (!confirm('Вернуть ветки писем в исходную карточку?')) return; undoMerge.disabled = true; void api(`/api/jobs/${recordId}/outreach-merge/${result.latest!.id}/undo`, { method: 'POST', body: '{}' }).then(() => { show('Объединение отменено.'); return openJob(recordId, false); }).catch(error => show(error.message, true)).finally(() => { undoMerge.disabled = false; }); }; }).catch(() => { /* merge recovery is optional UI state */ });
+  void api(`/api/jobs/${recordId}/outreach-merge`).then((result: { latest: { id: string } | null }) => { if (current?.id !== recordId || !result.latest) return; headerUndoMerge.classList.remove('hidden'); undoMerge.onclick = () => { if (!confirm('Вернуть ветки писем в исходную карточку?')) return; undoMerge.disabled = true; headerUndoMerge.disabled = true; void api(`/api/jobs/${recordId}/outreach-merge/${result.latest!.id}/undo`, { method: 'POST', body: '{}' }).then(() => { show('Объединение отменено.'); return openJob(recordId, false); }).catch(error => show(error.message, true)).finally(() => { undoMerge.disabled = false; headerUndoMerge.disabled = false; }); }; }).catch(() => { /* merge recovery is optional UI state */ });
   if (!outreachConversation) {
     participantList.textContent = 'Загружаем участников…'; messages.innerHTML = '<p class="text-sm text-slate-500">Загружаем переписку…</p>'; more.classList.add('hidden');
     return;
@@ -1011,23 +1014,23 @@ function renderOutreachConversation() {
   });
   analyzeConversation.onclick = async () => {
     if (!current || current.record_type !== 'cold_outreach') return;
-    const recordId = current.id; analyzeConversation.disabled = true; const label = analyzeConversation.textContent; analyzeConversation.textContent = 'AI распознаёт…';
+    const recordId = current.id; analyzeConversation.disabled = true; analyzeConversation.setAttribute('aria-busy', 'true');
     try {
       const result = await api(`/api/jobs/${recordId}/conversation/analyze`, { method: 'POST', body: '{}' }) as { processed: number; cached: number; skipped: number };
       await openJob(recordId, false);
       show(result.processed ? `AI обработал ${result.processed} писем${result.cached ? `, из них ${result.cached} из кэша` : ''}.` : 'В карточке нет писем с текстом для AI-разбора.');
     } catch (error) { show(error instanceof Error ? error.message : 'Не удалось распознать переписку.', true); }
-    finally { if (analyzeConversation.isConnected) { analyzeConversation.disabled = false; analyzeConversation.textContent = label; } }
+    finally { if (analyzeConversation.isConnected) { analyzeConversation.disabled = false; analyzeConversation.removeAttribute('aria-busy'); } }
   };
   analyzeCard.onclick = async () => {
     if (!current || current.record_type !== 'cold_outreach') return;
-    const recordId = current.id; analyzeCard.disabled = true; const label = analyzeCard.textContent; analyzeCard.textContent = 'AI заполняет…';
+    const recordId = current.id; analyzeCard.disabled = true; analyzeCard.setAttribute('aria-busy', 'true');
     try {
       const result = await api(`/api/jobs/${recordId}/outreach-card-analyze`, { method: 'POST', body: '{}' }) as { added_tags: number };
       await openJob(recordId, false);
       show(`Карточка заполнена AI${result.added_tags ? ` · добавлено тегов: ${result.added_tags}` : ''}.`);
     } catch (error) { show(error instanceof Error ? error.message : 'Не удалось распознать карточку.', true); }
-    finally { if (analyzeCard.isConnected) { analyzeCard.disabled = false; analyzeCard.textContent = label; } }
+    finally { if (analyzeCard.isConnected) { analyzeCard.disabled = false; analyzeCard.removeAttribute('aria-busy'); } }
   };
   mergeCards.onclick = async () => {
     if (!current || current.record_type !== 'cold_outreach') return;
