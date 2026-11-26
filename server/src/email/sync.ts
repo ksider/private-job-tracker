@@ -84,6 +84,7 @@ export class EmailSyncService {
       for (const mailboxPath of mailboxes) {
         const result = await this.syncMailbox(client, mailboxPath, settings); processed += result.processed; rejections += result.rejections; reviewItems += result.reviewItems; initialImport ||= result.initialImport;
       }
+      if (settings.outreach_mailbox.trim()) this.db.createOutreachRecordsFromMailbox(settings.outreach_mailbox.trim(), settings.username);
       this.db.updateImapSyncStatus({ status: 'ok', processed, rejections, reviews: reviewItems });
       return { processed, rejections, reviewItems, initialImport };
     } finally { await client.logout().catch(() => undefined); }

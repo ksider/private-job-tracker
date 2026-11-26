@@ -999,6 +999,31 @@ export class JobDatabase {
     this.db.prepare("UPDATE email_records SET review_status='ignored', unresolved_reason='outreach_linked', updated_at=? WHERE id=?").run(new Date().toISOString(), emailId);
     return { conversation, email: this.email(emailId) };
   }
+  createOutreachRecordsFromMailbox(mailbox: string, accountEmail: string) {
+    const emails = this.db.prepare(`SELECT DISTINCT email_records.id FROM email_records
+      JOIN email_locations ON email_locations.email_id=email_records.id
+      WHERE email_locations.mailbox=? AND NOT EXISTS (
+        SELECT 1 FROM email_thread_messages JOIN outreach_conversation_threads ON outreach_conversation_threads.thread_id=email_thread_messages.thread_id
+        WHERE email_thread_messages.email_id=email_records.id
+      ) ORDER BY email_records.received_at`).all(mailbox) as Array<{ id: string }>;
+    const account = accountEmail.trim().toLowerCase(); const created: JobRow[] = [];
+    for (const { id } of emails) {
+      const email = this.email(id); if (!email || this.outreachRecordIdsForEmail(id).length) continue;
+      const contacts: Array<{ address: string; name: string | null }> = [];
+      if (email.sender_email && email.sender_email.trim().toLowerCase() !== account) contacts.push({ address: email.sender_email.trim().toLowerCase(), name: email.sender_name });
+      try { const recipients = JSON.parse(email.recipients_json); if (Array.isArray(recipients)) for (const recipient of recipients) if (typeof recipient?.address === 'string' && recipient.address.trim().toLowerCase() !== account) contacts.push({ address: recipient.address.trim().toLowerCase(), name: typeof recipient.name === 'string' ? recipient.name : null }); } catch { /* optional metadata */ }
+      const contact = contacts[0];
+      if (contact) {
+        const existing = this.db.prepare(`SELECT id FROM jobs WHERE record_type='cold_outreach' AND (
+          LOWER(TRIM(COALESCE(outreach_contact_email,'')))=? OR EXISTS (SELECT 1 FROM outreach_participants WHERE outreach_participants.record_id=jobs.id AND outreach_participants.email=?)
+        ) ORDER BY created_at LIMIT 1`).get(contact.address, contact.address) as { id: string } | undefined;
+        if (existing) { this.confirmOutreachEmailLink(existing.id, id); continue; }
+      }
+      const record = this.createOutreachRecord({ contact_name: contact?.name ?? null, contact_email: contact?.address ?? null, summary: email.subject ? `Переписка из папки Cold Outreach: ${email.subject}` : 'Переписка из папки Cold Outreach.', occurred_at: email.received_at });
+      this.confirmOutreachEmailLink(record.id, id); created.push(record);
+    }
+    return created;
+  }
   outreachCandidatesForEmail(emailId: string): OutreachEmailCandidate[] {
     const email = this.email(emailId); if (!email) return [];
     const thread = this.threadForEmail(emailId); const linked = thread ? this.conversationForThread(thread.id) : undefined;

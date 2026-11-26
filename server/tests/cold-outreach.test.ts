@@ -165,6 +165,15 @@ describe('cold outreach data model', () => {
     });
     expect(db.outreachCandidatesForEmail(domainOnly.id)).toEqual([]);
     expect(() => db.linkEmailToOutreach(sameDomain.id, sent.id)).toThrow('already linked');
+    const folderOnly = db.saveEmail({
+      ...base, body_text: 'Follow up', body_hash: 'folder-only', uid_validity: `Cold Outreach\u001f8`, imap_uid: 103, received_at: '2026-10-25T12:00:00.000Z',
+      rfc_message_id: '<folder-only@example.test>', sender_email: 'me@example.test', recipients_json: '[{"name":"New contact","address":"new.contact@example.test"}]', direction: 'outgoing'
+    });
+    expect(db.emailMailboxes(folderOnly.id)).toEqual(['Cold Outreach']);
+    const autoCreated = db.createOutreachRecordsFromMailbox('Cold Outreach', 'me@example.test');
+    expect(autoCreated).toHaveLength(1);
+    expect(autoCreated[0]).toMatchObject({ record_type: 'cold_outreach', outreach_contact_name: 'New contact', outreach_contact_email: 'new.contact@example.test' });
+    expect(db.outreachCandidatesForEmail(folderOnly.id)).toEqual([{ record_id: autoCreated[0].id, match_status: 'exact', reasons: ['linked_thread'] }]);
     db.db.close();
   });
 
