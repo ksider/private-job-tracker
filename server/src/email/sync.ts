@@ -26,6 +26,7 @@ export const imapErrorMessage = (error: unknown) => {
 
 export class EmailSyncService {
   private running = false;
+  private automaticAiUnavailable = false;
   constructor(private readonly db: JobDatabase, private readonly secrets: SecretStore, private readonly aiRouter: AiRouter) {}
   private connection(credentials: ImapCredentials) {
     return new ImapFlow({ host: credentials.host, port: credentials.port, secure: credentials.tls_mode === 'tls', doSTARTTLS: credentials.tls_mode === 'starttls', auth: { user: credentials.username, pass: credentials.password }, tls: { rejectUnauthorized: true }, logger: false, emitLogs: false, disableCompression: true, socketTimeout: 60_000, greetingTimeout: 30_000 });
@@ -73,6 +74,7 @@ export class EmailSyncService {
   }
   private async sync(): Promise<SyncResult> {
     const settings = this.db.imapSettings();
+    this.automaticAiUnavailable = false;
     const credentials = this.configured({ ...settings, enabled: Boolean(settings.enabled), password: '' , allow_ai_email_text: Boolean(settings.ai_consent_at) }, settings);
     const client = this.connection(credentials);
     let processed = 0; let rejections = 0; let reviewItems = 0;
@@ -91,12 +93,18 @@ export class EmailSyncService {
     let processed = 0; let rejections = 0; let reviewItems = 0;
     try {
       const rawUidValidity = String(client.mailbox && client.mailbox.uidValidity || ''); if (!rawUidValidity) throw new Error(`IMAP folder “${mailboxPath}” did not return UIDVALIDITY.`);
-      const previous = this.db.syncState(mailboxPath); const initialImport = !previous?.uid_validity || previous.uid_validity !== rawUidValidity;
-      const startDate = new Date(); startDate.setUTCDate(startDate.getUTCDate() - settings.initial_sync_days);
-      const ids = initialImport ? await client.search({ since: startDate }, { uid: true }) : await client.search({ uid: `${previous.last_processed_uid + 1}:*` }, { uid: true });
-      const uids = Array.isArray(ids) ? ids : []; let maxUid = initialImport ? 0 : previous.last_processed_uid;
       // UIDVALIDITY belongs to a mailbox, not to the whole IMAP account.
       const uidValidity = `${mailboxPath}\u001f${rawUidValidity}`;
+      let previous = this.db.syncState(mailboxPath);
+      if (!previous) {
+        const importedLastUid = this.db.latestKnownEmailUid(uidValidity);
+        if (importedLastUid) { this.db.saveSyncState(mailboxPath, rawUidValidity, importedLastUid); previous = this.db.syncState(mailboxPath); }
+      }
+      const initialImport = !previous?.uid_validity || previous.uid_validity !== rawUidValidity;
+      const lastProcessedUid = previous?.last_processed_uid ?? 0;
+      const startDate = new Date(); startDate.setUTCDate(startDate.getUTCDate() - settings.initial_sync_days);
+      const ids = initialImport ? await client.search({ since: startDate }, { uid: true }) : await client.search({ uid: `${lastProcessedUid + 1}:*` }, { uid: true });
+      const uids = Array.isArray(ids) ? ids : []; let maxUid = initialImport ? 0 : lastProcessedUid;
       for await (const message of client.fetch(uids, { uid: true, source: true, internalDate: true }, { uid: true })) {
         maxUid = Math.max(maxUid, message.uid); if (this.db.hasEmail(uidValidity, message.uid) || !message.source) continue;
         const parsed = await simpleParser(message.source as Buffer);
@@ -112,17 +120,16 @@ export class EmailSyncService {
   }
   private async processEmail(input: { uidValidity: string; uid: number; receivedAt: string; body: string; bodySource: EmailTextSource; initialImport: boolean; settings: ImapSettingsRow; rfcMessageId: string | null; inReplyTo: string | null; references: string[]; subject: string | null; senderName: string | null; senderEmail: string | null; recipients: Array<{ address: string; name: string | null }>; direction: 'incoming' | 'outgoing' | 'unknown' }) {
     const { settings } = input; let category: string | null = null; let classificationJson: string | null = null; let proposedJobId: string | null = null; let matchStatus: 'exact' | 'probable' | 'no_match' | null = null; let unresolvedReason: string | null = input.bodySource === 'missing' ? 'missing_text' : settings.ai_consent_at ? 'ai_not_configured' : 'ai_consent_required';
-    if (input.direction !== 'outgoing' && input.bodySource !== 'missing' && settings.ai_consent_at && this.db.functionRoute('email')?.automatic_enabled) {
+    if (input.direction !== 'outgoing' && input.bodySource !== 'missing' && !this.automaticAiUnavailable && settings.ai_consent_at && this.db.functionRoute('email')?.automatic_enabled) {
       try {
         const classification = (await this.aiRouter.run('email', 'email', ({ provider, connection }) => classifyEmail(provider, connection, input.body))).value;
         category = classification.category; classificationJson = JSON.stringify(classification);
         const match = matchEmailToJob(this.db.list({ archive: 'all' }).filter(job => job.record_type === 'application'), classification, input.body); proposedJobId = match.jobId; matchStatus = match.status; unresolvedReason = match.unresolvedReason;
       } catch (error) {
-        // A shared provider quota may already be exhausted even when this
-        // tracker obeys its own configured spacing. Keep the email for review
-        // instead of failing the entire mailbox synchronization.
-        if (!(error instanceof Error) || !error.message.includes('(429)')) throw error;
-        unresolvedReason = 'ai_rate_limited';
+        // Automatic classification must never make mailbox persistence fail.
+        // Stop retrying the provider during this run after its first failure.
+        this.automaticAiUnavailable = true;
+        unresolvedReason = error instanceof Error && error.message.includes('(429)') ? 'ai_rate_limited' : 'ai_unavailable';
       }
     }
     const reviewStatus = input.direction === 'outgoing' || category === 'other' ? 'ignored' : 'pending_review';

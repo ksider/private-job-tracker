@@ -315,7 +315,12 @@ export function buildApp(config: AppConfig) {
   app.post('/api/settings/imap/mailboxes', async (request, reply) => { const checked = ImapSettingsSchema.safeParse(request.body); if (!checked.success) return reply.code(400).send({ error: 'Invalid IMAP settings', details: checked.error.flatten() }); try { return await emailSync.mailboxes(checked.data); } catch (error) { return reply.code(502).send({ error: imapErrorMessage(error) }); } });
   app.post('/api/settings/imap/sync', async (_request, reply) => { try { return await emailSync.syncNow(); } catch (error) { return reply.code(502).send({ error: imapErrorMessage(error) }); } });
   app.get('/api/email/sync/status', async () => imapView());
-  app.get('/api/email/review', async () => db.reviewEmails().map(email => ({ ...email, outreach_candidates: db.outreachCandidatesForEmail(email.id) })));
+  const emailReviewView = (email: ReturnType<typeof db.email>) => {
+    if (!email) return undefined;
+    const mailboxes = db.emailMailboxes(email.id); const outreachMailbox = db.imapSettings().outreach_mailbox;
+    return { ...email, mailboxes, is_outreach_mailbox: Boolean(outreachMailbox && mailboxes.includes(outreachMailbox)), outreach_candidates: db.outreachCandidatesForEmail(email.id) };
+  };
+  app.get('/api/email/review', async () => db.reviewEmails().map(email => emailReviewView(email)!));
   app.get('/api/outreach/options', async () => db.outreachOptions());
   app.get('/api/email/log', async (request) => { const query = request.query as { limit?: string; offset?: string }; return db.emailLog(Number(query.limit), Number(query.offset)); });
   app.get('/api/email/duplicates', async () => db.exactEmailDuplicates());
@@ -323,7 +328,7 @@ export function buildApp(config: AppConfig) {
   app.get('/api/archive/notifications', async () => ({ count: db.archiveNotificationCount() }));
   app.post('/api/archive/notifications/seen', async () => { db.markArchiveNotificationsSeen(); return { ok: true }; });
   app.post('/api/jobs/:id/archive-review', async (request, reply) => { const reason = (request.body as { reason?: unknown } | undefined)?.reason; if (reason !== 'email_exact' && reason !== 'email_review') return reply.code(400).send({ error: 'Invalid archive review state' }); try { return db.moveArchiveEmailReview((request.params as { id: string }).id, reason) ?? reply.code(404).send({ error: 'Archived email rejection not found' }); } catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : 'Could not move the archived rejection.' }); } });
-  app.get('/api/email/review/:id', async (request, reply) => { const email = db.email((request.params as { id: string }).id); return email ? { ...email, outreach_candidates: db.outreachCandidatesForEmail(email.id) } : reply.code(404).send({ error: 'Email review item not found' }); });
+  app.get('/api/email/review/:id', async (request, reply) => emailReviewView(db.email((request.params as { id: string }).id)) ?? reply.code(404).send({ error: 'Email review item not found' }));
   app.post('/api/email/review/:id/outreach-link', async (request, reply) => {
     const checked = z.object({ record_id: z.string().uuid() }).safeParse(request.body ?? {}); if (!checked.success) return reply.code(400).send({ error: 'Select a Cold Outreach record.' });
     const emailId = (request.params as { id: string }).id; if (!db.email(emailId)) return reply.code(404).send({ error: 'Email review item not found' });

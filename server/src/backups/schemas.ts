@@ -9,7 +9,7 @@ export const PortableBackupSchema = z.object({
     job_match_analyses: RowsSchema, ai_strategy_analyses: RowsSchema.optional().default([]), email_records: RowsSchema,
     email_locations: RowsSchema.optional().default([]), email_threads: RowsSchema.optional().default([]), email_thread_keys: RowsSchema.optional().default([]),
     email_thread_messages: RowsSchema.optional().default([]), outreach_conversation_threads: RowsSchema.optional().default([]), outreach_participants: RowsSchema.optional().default([]), outreach_email_analyses: RowsSchema.optional().default([]), email_effects: RowsSchema,
-    ai_providers: RowsSchema.optional().default([]), ai_provider_connections: RowsSchema.optional().default([]), ai_function_routes: RowsSchema.optional().default([]), ai_settings: RowsSchema.optional().default([]), imap_settings: RowsSchema.optional().default([])
+    ai_providers: RowsSchema.optional().default([]), ai_provider_connections: RowsSchema.optional().default([]), ai_function_routes: RowsSchema.optional().default([]), ai_settings: RowsSchema.optional().default([]), imap_settings: RowsSchema.optional().default([]), imap_mailbox_sync_state: RowsSchema.optional().default([])
   }),
   candidate_profile: z.unknown().nullable().optional()
 });

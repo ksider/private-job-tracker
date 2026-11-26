@@ -102,9 +102,11 @@ describe('cold outreach data model', () => {
     const completed = db.completeOutreachEmailAnalysis(started.analysis.id, { summary: 'Nikolay sent an introduction to the contact.' });
     expect(db.outreachConversation(outreach.id).messages).toMatchObject([{ id: email.id, ai_summary: 'Nikolay sent an introduction to the contact.', ai_model: 'summary-model' }]);
 
+    db.saveSyncState('Sent', '7', 42);
     const backup = db.portableBackup(); const restored = new JobDatabase(':memory:'); restored.restorePortableBackup(backup.data);
     expect(restored.get(outreach.id)).toMatchObject({ record_type: 'cold_outreach', outreach_contact_email: 'contact@example.test' });
     expect(restored.email(email.id)).toMatchObject({ rfc_message_id: '<message-1@example.test>', direction: 'outgoing' });
+    expect(restored.syncState('Sent')).toMatchObject({ uid_validity: '7', last_processed_uid: 42 });
     expect(restored.db.prepare('SELECT record_id FROM outreach_conversation_threads WHERE thread_id=?').get(threadId)).toEqual({ record_id: outreach.id });
     expect(restored.outreachParticipants(outreach.id).map(participant => participant.email)).toEqual(['contact@example.test', 'nikolay@example.test']);
     expect(restored.db.prepare('SELECT result_json FROM outreach_email_analyses WHERE id=?').get(completed.id)).toEqual({ result_json: JSON.stringify({ summary: 'Nikolay sent an introduction to the contact.' }) });
