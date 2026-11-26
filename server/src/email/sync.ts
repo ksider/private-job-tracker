@@ -8,9 +8,13 @@ import { classifyEmail } from './classification.js';
 import { matchEmailToJob } from './matching.js';
 import { EmailClassificationSchema, type ImapSettingsInput } from './schemas.js';
 import { extractEmailText, type EmailTextSource } from './body.js';
+import { analyzeOutreachEmail } from '../ai/outreach-email.js';
 
 type ImapCredentials = Pick<ImapSettingsRow, 'host' | 'port' | 'tls_mode' | 'username'> & { password: string };
 type SyncResult = { processed: number; rejections: number; reviewItems: number; initialImport: boolean };
+type MailAddress = { address?: string; name?: string; group?: MailAddress[] };
+type MailAddressList = { value: MailAddress[] };
+const flattenAddresses = (value: MailAddressList | MailAddressList[] | undefined) => (Array.isArray(value) ? value : value ? [value] : []).flatMap(list => list.value).flatMap(item => item.group?.length ? item.group : [item]).flatMap(item => item.address?.trim() ? [{ address: item.address.trim().toLowerCase(), name: item.name?.trim() || null }] : []);
 
 export const imapErrorMessage = (error: unknown) => {
   const value = error as { message?: unknown; responseStatus?: unknown; responseText?: unknown };
@@ -31,7 +35,7 @@ export class EmailSyncService {
     if (!input.host || !input.username || !password) throw new Error('Provide IMAP host, username, and password.');
     return { host: input.host, port: input.port, tls_mode: input.tls_mode, username: input.username, password };
   }
-  private selectedMailboxes(input: Pick<ImapSettingsInput, 'interview_mailbox' | 'rejection_mailbox'>) { return [...new Set([input.interview_mailbox, input.rejection_mailbox].map(mailbox => mailbox.trim()).filter(Boolean))]; }
+  private selectedMailboxes(input: Pick<ImapSettingsInput, 'interview_mailbox' | 'rejection_mailbox' | 'outreach_mailbox' | 'inbox_mailbox' | 'sent_mailbox'>) { return [...new Set([input.interview_mailbox, input.rejection_mailbox, input.outreach_mailbox, input.inbox_mailbox, input.sent_mailbox].map(mailbox => mailbox.trim()).filter(Boolean))]; }
   async test(input: ImapSettingsInput) {
     const client = this.connection(this.configured(input, this.db.imapSettings()));
     const mailboxes = this.selectedMailboxes(input); if (!mailboxes.length) throw new Error('Select at least one IMAP folder.');
@@ -96,17 +100,19 @@ export class EmailSyncService {
       for await (const message of client.fetch(uids, { uid: true, source: true, internalDate: true }, { uid: true })) {
         maxUid = Math.max(maxUid, message.uid); if (this.db.hasEmail(uidValidity, message.uid) || !message.source) continue;
         const parsed = await simpleParser(message.source as Buffer);
-        if (parsed.from?.value.some(sender => sender.address?.trim().toLowerCase() === settings.username.trim().toLowerCase())) continue;
         const extracted = extractEmailText(parsed.text, typeof parsed.html === 'string' ? parsed.html : null);
-        const email = await this.processEmail({ uidValidity, uid: message.uid, receivedAt: new Date(message.internalDate ?? Date.now()).toISOString(), body: extracted.text, bodySource: extracted.source, initialImport, settings });
+        const sender = flattenAddresses(parsed.from)[0]; const recipients = [...flattenAddresses(parsed.to), ...flattenAddresses(parsed.cc), ...flattenAddresses(parsed.bcc)];
+        const email = await this.processEmail({ uidValidity, uid: message.uid, receivedAt: new Date(message.internalDate ?? Date.now()).toISOString(), body: extracted.text, bodySource: extracted.source, initialImport, settings,
+          rfcMessageId: parsed.messageId ?? null, inReplyTo: parsed.inReplyTo ?? null, references: Array.isArray(parsed.references) ? parsed.references : parsed.references ? [parsed.references] : [], subject: parsed.subject ?? null, senderName: sender?.name ?? null, senderEmail: sender?.address ?? null, recipients,
+          direction: sender?.address === settings.username.trim().toLowerCase() ? 'outgoing' : sender?.address ? 'incoming' : 'unknown' });
         processed++; if (email.category === 'rejection') rejections++; if (email.review_status === 'pending_review') reviewItems++;
       }
       this.db.saveSyncState(mailboxPath, rawUidValidity, maxUid); return { processed, rejections, reviewItems, initialImport };
     } finally { lock.release(); }
   }
-  private async processEmail(input: { uidValidity: string; uid: number; receivedAt: string; body: string; bodySource: EmailTextSource; initialImport: boolean; settings: ImapSettingsRow }) {
+  private async processEmail(input: { uidValidity: string; uid: number; receivedAt: string; body: string; bodySource: EmailTextSource; initialImport: boolean; settings: ImapSettingsRow; rfcMessageId: string | null; inReplyTo: string | null; references: string[]; subject: string | null; senderName: string | null; senderEmail: string | null; recipients: Array<{ address: string; name: string | null }>; direction: 'incoming' | 'outgoing' | 'unknown' }) {
     const { settings } = input; let category: string | null = null; let classificationJson: string | null = null; let proposedJobId: string | null = null; let matchStatus: 'exact' | 'probable' | 'no_match' | null = null; let unresolvedReason: string | null = input.bodySource === 'missing' ? 'missing_text' : settings.ai_consent_at ? 'ai_not_configured' : 'ai_consent_required';
-    if (input.bodySource !== 'missing' && settings.ai_consent_at && this.db.functionRoute('email')?.automatic_enabled) {
+    if (input.direction !== 'outgoing' && input.bodySource !== 'missing' && settings.ai_consent_at && this.db.functionRoute('email')?.automatic_enabled) {
       try {
         const classification = (await this.aiRouter.run('email', 'email', ({ provider, connection }) => classifyEmail(provider, connection, input.body))).value;
         category = classification.category; classificationJson = JSON.stringify(classification);
@@ -119,8 +125,14 @@ export class EmailSyncService {
         unresolvedReason = 'ai_rate_limited';
       }
     }
-    const reviewStatus = category === 'other' ? 'ignored' : 'pending_review';
-    const saved = this.db.saveEmail({ uid_validity: input.uidValidity, imap_uid: input.uid, received_at: input.receivedAt, body_text: input.body, body_source: input.bodySource, body_hash: crypto.createHash('sha256').update(input.body).digest('hex'), category, classification_json: classificationJson, proposed_job_id: proposedJobId, match_status: matchStatus, review_status: reviewStatus, unresolved_reason: unresolvedReason, initial_import: input.initialImport ? 1 : 0 });
+    const reviewStatus = input.direction === 'outgoing' || category === 'other' ? 'ignored' : 'pending_review';
+    let saved = this.db.saveEmail({ uid_validity: input.uidValidity, imap_uid: input.uid, received_at: input.receivedAt, body_text: input.body, body_source: input.bodySource, body_hash: crypto.createHash('sha256').update(input.body).digest('hex'), rfc_message_id: input.rfcMessageId, in_reply_to: input.inReplyTo, references_json: JSON.stringify(input.references), subject: input.subject, sender_name: input.senderName, sender_email: input.senderEmail, recipients_json: JSON.stringify(input.recipients), direction: input.direction, category, classification_json: classificationJson, proposed_job_id: proposedJobId, match_status: matchStatus, review_status: reviewStatus, unresolved_reason: unresolvedReason, initial_import: input.initialImport ? 1 : 0 });
+    if (saved.review_status !== 'applied' && this.db.outreachCandidatesForEmail(saved.id).some(candidate => candidate.match_status === 'probable')) {
+      saved = this.db.classifyEmail(saved.id, { category: saved.category, classification_json: saved.classification_json, proposed_job_id: saved.proposed_job_id, match_status: saved.match_status, unresolved_reason: 'outreach_candidate', review_status: 'pending_review' })!;
+    }
+    if (saved.body_source !== 'missing' && settings.ai_consent_at && this.db.functionRoute('outreach_email')?.automatic_enabled && this.db.outreachRecordIdsForEmail(saved.id).length) {
+      void analyzeOutreachEmail({ db: this.db, aiRouter: this.aiRouter, emailId: saved.id }).catch(error => console.warn('[Email sync] outreach email analysis failed after persistence', error));
+    }
     const shouldArchive = saved.match_status === 'exact' || (settings.rejection_handling === 'manual_review' && saved.match_status === 'probable');
     if (!input.initialImport && settings.rejection_handling !== 'notifications_only' && saved.category === 'rejection' && shouldArchive) return this.db.autoApplyRejection(saved.id) ?? saved;
     return saved;

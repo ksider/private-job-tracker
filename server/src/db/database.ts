@@ -21,18 +21,21 @@ export type AiUsageSummary = { requests: number; input_tokens: number | null; ou
 export type AiConnectionPublic = Omit<AiConnectionRow, 'encrypted_api_key' | 'email_requests_per_minute' | 'enabled' | 'model_enabled' | 'provider_enabled'> & { enabled: boolean; model_enabled: boolean; api_key_configured: boolean; usage: AiUsageSummary };
 export type AiProviderRow = { id: string; provider_type: ProviderType; display_name: string; base_url: string | null; encrypted_api_key: string; requests_per_minute: number; tokens_per_minute: number; enabled: number; profile_consent_at: string | null; created_at: string; updated_at: string };
 export type AiProviderPublic = Omit<AiProviderRow, 'encrypted_api_key' | 'enabled'> & { enabled: boolean; api_key_configured: boolean; models: AiConnectionPublic[] };
-export type AiFunctionKey = 'match' | 'tags' | 'location' | 'generic_parse' | 'snapshot_parse' | 'email' | 'cover_letter' | 'strategy';
+export type AiFunctionKey = 'match' | 'tags' | 'location' | 'generic_parse' | 'snapshot_parse' | 'email' | 'outreach_email' | 'cover_letter' | 'strategy';
 export type AiFunctionRouteRow = { function_key: AiFunctionKey; target_type: 'provider' | 'model' | null; provider_id: string | null; model_id: string | null; automatic_enabled: number; updated_at: string };
 export type AiSettingsRow = { default_connection_id: string | null; default_model: string | null; tag_connection_id: string | null; email_connection_id: string | null; generic_parse_connection_id: string | null; snapshot_parse_connection_id: string | null; auto_match_on_import: number; auto_tags_on_import: number; auto_generic_parse_on_import: number; auto_location_on_import: number; auto_email_classification: number };
 export type AiAnalysisRow = { id: string; job_id: string; provider_connection_id: string | null; provider_type: ProviderType; model: string; profile_hash: string; job_description_hash: string; prompt_version: string; classification: MatchClassification | null; result_json: string | null; status: 'running' | 'completed' | 'failed'; error_message: string | null; created_at: string; completed_at: string | null };
 export type AiStrategyAnalysisRow = { id: string; provider_connection_id: string | null; provider_type: ProviderType; model: string; stats_hash: string; prompt_version: string; range_from: string | null; range_to: string | null; result_json: string; created_at: string };
-export type ImapSettingsRow = { host: string; port: number; tls_mode: 'tls' | 'starttls'; username: string; encrypted_password: string; mailbox: string; interview_mailbox: string; rejection_mailbox: string; enabled: number; sync_interval_minutes: number; initial_sync_days: number; rejection_handling: 'manual_review' | 'auto_exact' | 'notifications_only'; ai_consent_at: string | null; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; processed_count: number; rejection_count: number; review_count: number; updated_at: string };
+export type OutreachEmailAnalysisRow = { id: string; email_id: string; content_hash: string; provider_connection_id: string | null; provider_type: ProviderType; model: string; prompt_version: string; result_json: string | null; status: 'running' | 'completed' | 'failed'; error_message: string | null; created_at: string; completed_at: string | null };
+export type ImapSettingsRow = { host: string; port: number; tls_mode: 'tls' | 'starttls'; username: string; encrypted_password: string; mailbox: string; interview_mailbox: string; rejection_mailbox: string; outreach_mailbox: string; inbox_mailbox: string; sent_mailbox: string; enabled: number; sync_interval_minutes: number; initial_sync_days: number; rejection_handling: 'manual_review' | 'auto_exact' | 'notifications_only'; ai_consent_at: string | null; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; processed_count: number; rejection_count: number; review_count: number; updated_at: string };
 export type EmailDirection = 'incoming' | 'outgoing' | 'unknown';
 export type EmailRecordRow = { id: string; uid_validity: string; imap_uid: number; received_at: string; body_text: string; body_html: string | null; body_source: 'plain' | 'html_fallback' | 'missing'; body_hash: string; rfc_message_id: string | null; in_reply_to: string | null; references_json: string; provider_message_id: string | null; provider_thread_id: string | null; subject: string | null; sender_name: string | null; sender_email: string | null; recipients_json: string; direction: EmailDirection; original_url: string | null; category: string | null; classification_json: string | null; proposed_job_id: string | null; match_status: 'exact' | 'probable' | 'no_match' | null; review_status: 'pending_review' | 'applied' | 'ignored' | 'reverted'; review_action: 'none' | 'rejection' | 'interview' | null; unresolved_reason: string | null; initial_import: number; created_at: string; updated_at: string; job_title?: string | null; job_company?: string | null; reversible_effect?: number };
 export type EmailLogRow = Omit<EmailRecordRow, 'body_text' | 'body_hash' | 'classification_json'>;
 export type EmailThreadRow = { id: string; created_at: string; updated_at: string };
 export type EmailLocationRow = { id: string; email_id: string; mailbox: string; uid_validity: string; imap_uid: number; first_seen_at: string; last_seen_at: string };
 export type OutreachEmailCandidate = { record_id: string; match_status: 'exact' | 'probable'; reasons: Array<'linked_thread' | 'contact_email'> };
+export type OutreachParticipantRow = { record_id: string; email: string; name: string | null; first_seen_at: string; last_seen_at: string };
+export type OutreachConversationMessage = Pick<EmailRecordRow, 'id' | 'received_at' | 'body_text' | 'subject' | 'sender_name' | 'sender_email' | 'direction' | 'original_url'> & { thread_id: string; ai_summary: string | null; ai_model: string | null; ai_completed_at: string | null };
 export type BackupSettingsRow = { webhook_url: string; encrypted_webhook_secret: string; automatic_enabled: number; interval_hours: number; last_sync_at: string | null; last_sync_status: string | null; last_error: string | null; updated_at: string };
 export type DisplaySettingsRow = { inactive_after_days: number; updated_at: string };
 export type ParserSourceMode = 'preset' | 'ai_manual' | 'ai_auto';
@@ -102,7 +105,14 @@ export class JobDatabase {
         classification TEXT, result_json TEXT, status TEXT NOT NULL, error_message TEXT,
         created_at TEXT NOT NULL, completed_at TEXT);
       CREATE INDEX IF NOT EXISTS job_match_analyses_job_date ON job_match_analyses(job_id, created_at DESC);
-      CREATE INDEX IF NOT EXISTS job_match_analyses_job_completed ON job_match_analyses(job_id, status, completed_at DESC);`);
+      CREATE INDEX IF NOT EXISTS job_match_analyses_job_completed ON job_match_analyses(job_id, status, completed_at DESC);
+      CREATE TABLE IF NOT EXISTS outreach_email_analyses (
+        id TEXT PRIMARY KEY, email_id TEXT NOT NULL REFERENCES email_records(id) ON DELETE CASCADE, content_hash TEXT NOT NULL,
+        provider_connection_id TEXT REFERENCES ai_provider_connections(id) ON DELETE SET NULL, provider_type TEXT NOT NULL, model TEXT NOT NULL, prompt_version TEXT NOT NULL,
+        result_json TEXT, status TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, completed_at TEXT,
+        UNIQUE(content_hash, provider_type, model, prompt_version));
+      CREATE INDEX IF NOT EXISTS outreach_email_analyses_email ON outreach_email_analyses(email_id, status, completed_at DESC);`);
+    this.db.prepare("UPDATE outreach_email_analyses SET status='failed',error_message=?,completed_at=? WHERE status='running'").run('AI analysis interrupted by server restart.', new Date().toISOString());
     this.db.exec(`CREATE TABLE IF NOT EXISTS ai_strategy_analyses (
       id TEXT PRIMARY KEY, provider_connection_id TEXT REFERENCES ai_provider_connections(id) ON DELETE SET NULL,
       provider_type TEXT NOT NULL, model TEXT NOT NULL, stats_hash TEXT NOT NULL UNIQUE, prompt_version TEXT NOT NULL,
@@ -190,7 +200,7 @@ export class JobDatabase {
       });
       migrateConnections();
     }
-    const functionKeys: AiFunctionKey[] = ['match', 'tags', 'location', 'generic_parse', 'snapshot_parse', 'email', 'cover_letter', 'strategy'];
+    const functionKeys: AiFunctionKey[] = ['match', 'tags', 'location', 'generic_parse', 'snapshot_parse', 'email', 'outreach_email', 'cover_letter', 'strategy'];
     const insertRoute = this.db.prepare('INSERT OR IGNORE INTO ai_function_routes (function_key,automatic_enabled,updated_at) VALUES (?,?,?)');
     const currentAiSettings = this.db.prepare('SELECT * FROM ai_settings WHERE id=1').get() as AiSettingsRow;
     const legacyRouteModels: Partial<Record<AiFunctionKey, string | null>> = { match: currentAiSettings.default_connection_id, tags: currentAiSettings.tag_connection_id ?? currentAiSettings.default_connection_id, location: currentAiSettings.tag_connection_id ?? currentAiSettings.default_connection_id, generic_parse: currentAiSettings.generic_parse_connection_id ?? currentAiSettings.default_connection_id, snapshot_parse: currentAiSettings.snapshot_parse_connection_id ?? currentAiSettings.default_connection_id, email: currentAiSettings.email_connection_id ?? currentAiSettings.default_connection_id, cover_letter: currentAiSettings.default_connection_id };
@@ -199,7 +209,7 @@ export class JobDatabase {
     const migrateRoute = this.db.prepare("UPDATE ai_function_routes SET target_type='model', model_id=?, provider_id=NULL, updated_at=? WHERE function_key=? AND target_type IS NULL AND updated_at=''");
     for (const key of functionKeys) if (legacyRouteModels[key] && this.db.prepare('SELECT 1 FROM ai_provider_connections WHERE id=?').get(legacyRouteModels[key])) migrateRoute.run(legacyRouteModels[key], new Date().toISOString(), key);
     this.db.exec(`CREATE TABLE IF NOT EXISTS imap_settings (
-      id INTEGER PRIMARY KEY CHECK (id = 1), host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 993, tls_mode TEXT NOT NULL DEFAULT 'tls', username TEXT NOT NULL DEFAULT '', encrypted_password TEXT NOT NULL DEFAULT '', mailbox TEXT NOT NULL DEFAULT 'INBOX', interview_mailbox TEXT NOT NULL DEFAULT '', rejection_mailbox TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 0,
+      id INTEGER PRIMARY KEY CHECK (id = 1), host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 993, tls_mode TEXT NOT NULL DEFAULT 'tls', username TEXT NOT NULL DEFAULT '', encrypted_password TEXT NOT NULL DEFAULT '', mailbox TEXT NOT NULL DEFAULT 'INBOX', interview_mailbox TEXT NOT NULL DEFAULT '', rejection_mailbox TEXT NOT NULL DEFAULT '', outreach_mailbox TEXT NOT NULL DEFAULT '', inbox_mailbox TEXT NOT NULL DEFAULT '', sent_mailbox TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 0,
       sync_interval_minutes INTEGER NOT NULL DEFAULT 15, initial_sync_days INTEGER NOT NULL DEFAULT 30, rejection_handling TEXT NOT NULL DEFAULT 'manual_review', ai_consent_at TEXT,
       last_sync_at TEXT, last_sync_status TEXT, last_error TEXT, processed_count INTEGER NOT NULL DEFAULT 0, rejection_count INTEGER NOT NULL DEFAULT 0, review_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '');
       INSERT OR IGNORE INTO imap_settings (id, updated_at) VALUES (1, '');
@@ -236,6 +246,10 @@ export class JobDatabase {
         record_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, thread_id TEXT NOT NULL REFERENCES email_threads(id) ON DELETE CASCADE,
         link_method TEXT NOT NULL, linked_at TEXT NOT NULL, PRIMARY KEY(thread_id));
       CREATE INDEX IF NOT EXISTS outreach_conversation_threads_record ON outreach_conversation_threads(record_id);
+      CREATE TABLE IF NOT EXISTS outreach_participants (
+        record_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, email TEXT NOT NULL, name TEXT,
+        first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, PRIMARY KEY(record_id,email));
+      CREATE INDEX IF NOT EXISTS outreach_participants_email ON outreach_participants(email);
       CREATE TABLE IF NOT EXISTS email_effects (
         id TEXT PRIMARY KEY, email_id TEXT NOT NULL REFERENCES email_records(id) ON DELETE CASCADE, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
         previous_status TEXT NOT NULL, previous_result_outcome TEXT, next_status TEXT NOT NULL, next_result_outcome TEXT, automatic INTEGER NOT NULL, applied_at TEXT NOT NULL, reverted_at TEXT,
@@ -255,6 +269,9 @@ export class JobDatabase {
     const needsMailboxUpgrade = !imapColumns.some(column => column.name === 'interview_mailbox');
     if (needsMailboxUpgrade) this.db.exec("ALTER TABLE imap_settings ADD COLUMN interview_mailbox TEXT NOT NULL DEFAULT ''");
     if (!imapColumns.some(column => column.name === 'rejection_mailbox')) this.db.exec("ALTER TABLE imap_settings ADD COLUMN rejection_mailbox TEXT NOT NULL DEFAULT ''");
+    if (!imapColumns.some(column => column.name === 'outreach_mailbox')) this.db.exec("ALTER TABLE imap_settings ADD COLUMN outreach_mailbox TEXT NOT NULL DEFAULT ''");
+    if (!imapColumns.some(column => column.name === 'inbox_mailbox')) this.db.exec("ALTER TABLE imap_settings ADD COLUMN inbox_mailbox TEXT NOT NULL DEFAULT ''");
+    if (!imapColumns.some(column => column.name === 'sent_mailbox')) this.db.exec("ALTER TABLE imap_settings ADD COLUMN sent_mailbox TEXT NOT NULL DEFAULT ''");
     if (needsMailboxUpgrade) {
       this.db.exec("UPDATE imap_settings SET interview_mailbox=mailbox WHERE interview_mailbox='' AND mailbox<>''");
       this.db.exec(`INSERT OR IGNORE INTO imap_mailbox_sync_state (mailbox, uid_validity, last_processed_uid, updated_at)
@@ -291,6 +308,14 @@ export class JobDatabase {
     const unthreaded = this.db.prepare('SELECT email_records.id,email_records.updated_at FROM email_records LEFT JOIN email_thread_messages ON email_thread_messages.email_id=email_records.id WHERE email_thread_messages.email_id IS NULL ORDER BY email_records.received_at,email_records.created_at').all() as Array<{ id: string; updated_at: string }>;
     const backfillThreads = this.db.transaction(() => { for (const email of unthreaded) this.resolveEmailThread(email.id, email.updated_at); });
     backfillThreads();
+    this.db.exec(`INSERT OR IGNORE INTO outreach_participants (record_id,email,name,first_seen_at,last_seen_at)
+      SELECT id, LOWER(TRIM(outreach_contact_email)), outreach_contact_name, created_at, updated_at FROM jobs
+      WHERE record_type='cold_outreach' AND TRIM(COALESCE(outreach_contact_email,''))<>''`);
+    const linkedEmails = this.db.prepare(`SELECT outreach_conversation_threads.record_id,email_records.id AS email_id FROM outreach_conversation_threads
+      JOIN email_thread_messages ON email_thread_messages.thread_id=outreach_conversation_threads.thread_id
+      JOIN email_records ON email_records.id=email_thread_messages.email_id`).all() as Array<{ record_id: string; email_id: string }>;
+    const backfillParticipants = this.db.transaction(() => { for (const item of linkedEmails) this.recordEmailParticipants(item.record_id, item.email_id); });
+    backfillParticipants();
     this.db.exec("UPDATE jobs SET status='archived', archive_reason=CASE WHEN EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id AND email_effects.automatic=1) THEN 'email_exact' ELSE 'email_review' END, archive_seen_at=updated_at WHERE status='result' AND result_outcome='rejected' AND EXISTS (SELECT 1 FROM email_effects WHERE email_effects.job_id=jobs.id)");
   }
   import(parsed: ParsedJob, raw: { html: string; text: string | null; collectorVersion: string; capturedAt: string; pageTitle?: string }) {
@@ -326,6 +351,7 @@ export class JobDatabase {
     this.db.prepare(`INSERT INTO jobs (id,record_type,source,source_job_id,source_url,title,company,outreach_contact_name,outreach_contact_email,outreach_summary,outreach_summary_edited,status,notes,captured_at,created_at,updated_at,last_activity_at,parse_status)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, 'cold_outreach', 'cold_outreach', id, '', null, input.company?.trim() || null, input.contact_name?.trim() || null, input.contact_email?.trim().toLowerCase() || null, input.summary?.trim() || null, input.summary?.trim() ? 1 : 0, 'saved', input.notes ?? '', occurredAt, occurredAt, occurredAt, occurredAt, 'not_applicable');
     this.insertEvent(id, 'saved', occurredAt);
+    if (input.contact_email?.trim()) this.upsertOutreachParticipant(id, input.contact_email, input.contact_name ?? null, occurredAt);
     return this.get(id)!;
   }
   list(filters: { search?: string; record_type?: string; status?: string; source?: string; company?: string; tag?: string; country?: string | string[]; language?: string | string[]; match?: string | string[]; job_id?: string | string[]; order?: string; archive?: string; inactive?: string }) {
@@ -786,11 +812,11 @@ export class JobDatabase {
   strategyAnalysis(statsHash: string) { return this.db.prepare('SELECT * FROM ai_strategy_analyses WHERE stats_hash=?').get(statsHash) as AiStrategyAnalysisRow | undefined; }
   saveStrategyAnalysis(input: Omit<AiStrategyAnalysisRow, 'id' | 'created_at'>) { const id = crypto.randomUUID(); const createdAt = new Date().toISOString(); this.db.prepare('INSERT INTO ai_strategy_analyses (id,provider_connection_id,provider_type,model,stats_hash,prompt_version,range_from,range_to,result_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(id, input.provider_connection_id, input.provider_type, input.model, input.stats_hash, input.prompt_version, input.range_from, input.range_to, input.result_json, createdAt); return this.db.prepare('SELECT * FROM ai_strategy_analyses WHERE id=?').get(id) as AiStrategyAnalysisRow; }
   imapSettings() { return this.db.prepare('SELECT * FROM imap_settings WHERE id=1').get() as ImapSettingsRow; }
-  saveImapSettings(input: Partial<Pick<ImapSettingsRow, 'host' | 'port' | 'tls_mode' | 'username' | 'encrypted_password' | 'mailbox' | 'interview_mailbox' | 'rejection_mailbox' | 'enabled' | 'sync_interval_minutes' | 'initial_sync_days' | 'rejection_handling' | 'ai_consent_at'>>) {
+  saveImapSettings(input: Partial<Pick<ImapSettingsRow, 'host' | 'port' | 'tls_mode' | 'username' | 'encrypted_password' | 'mailbox' | 'interview_mailbox' | 'rejection_mailbox' | 'outreach_mailbox' | 'inbox_mailbox' | 'sent_mailbox' | 'enabled' | 'sync_interval_minutes' | 'initial_sync_days' | 'rejection_handling' | 'ai_consent_at'>>) {
     const old = this.imapSettings(); const now = new Date().toISOString();
-    this.db.prepare('UPDATE imap_settings SET host=?, port=?, tls_mode=?, username=?, encrypted_password=?, mailbox=?, interview_mailbox=?, rejection_mailbox=?, enabled=?, sync_interval_minutes=?, initial_sync_days=?, rejection_handling=?, ai_consent_at=?, updated_at=? WHERE id=1').run(
+    this.db.prepare('UPDATE imap_settings SET host=?, port=?, tls_mode=?, username=?, encrypted_password=?, mailbox=?, interview_mailbox=?, rejection_mailbox=?, outreach_mailbox=?, inbox_mailbox=?, sent_mailbox=?, enabled=?, sync_interval_minutes=?, initial_sync_days=?, rejection_handling=?, ai_consent_at=?, updated_at=? WHERE id=1').run(
       input.host ?? old.host, input.port ?? old.port, input.tls_mode ?? old.tls_mode, input.username ?? old.username, input.encrypted_password ?? old.encrypted_password,
-      input.mailbox ?? old.mailbox, input.interview_mailbox ?? old.interview_mailbox, input.rejection_mailbox ?? old.rejection_mailbox, input.enabled ?? old.enabled, input.sync_interval_minutes ?? old.sync_interval_minutes, input.initial_sync_days ?? old.initial_sync_days,
+      input.mailbox ?? old.mailbox, input.interview_mailbox ?? old.interview_mailbox, input.rejection_mailbox ?? old.rejection_mailbox, input.outreach_mailbox ?? old.outreach_mailbox, input.inbox_mailbox ?? old.inbox_mailbox, input.sent_mailbox ?? old.sent_mailbox, input.enabled ?? old.enabled, input.sync_interval_minutes ?? old.sync_interval_minutes, input.initial_sync_days ?? old.initial_sync_days,
       input.rejection_handling ?? old.rejection_handling, input.ai_consent_at ?? old.ai_consent_at, now);
     return this.imapSettings();
   }
@@ -876,7 +902,7 @@ export class JobDatabase {
     for (const key of keys) this.db.prepare('INSERT OR IGNORE INTO email_thread_keys (thread_id,kind,value,created_at) VALUES (?,?,?,?)').run(threadId, key.kind, key.value, now);
     this.db.prepare('UPDATE email_threads SET updated_at=? WHERE id=?').run(now, threadId);
     const conversation = this.conversationForThread(threadId);
-    if (conversation) this.touchOutreachActivity(conversation.record_id, email.received_at, now);
+    if (conversation) { this.touchOutreachActivity(conversation.record_id, email.received_at, now); this.recordEmailParticipants(conversation.record_id, email.id); }
     return threadId;
   }
   private touchOutreachActivity(recordId: string, occurredAt: string, now = new Date().toISOString()) {
@@ -889,6 +915,66 @@ export class JobDatabase {
     JOIN email_thread_messages ON email_thread_messages.email_id=email_records.id
     JOIN outreach_conversation_threads ON outreach_conversation_threads.thread_id=email_thread_messages.thread_id
     WHERE outreach_conversation_threads.record_id=? ORDER BY email_records.received_at,email_records.created_at`).all(recordId) as Array<EmailRecordRow & { thread_id: string }>; }
+  outreachMessage(recordId: string, emailId: string) { return this.db.prepare(`SELECT email_records.* FROM email_records
+    JOIN email_thread_messages ON email_thread_messages.email_id=email_records.id
+    JOIN outreach_conversation_threads ON outreach_conversation_threads.thread_id=email_thread_messages.thread_id
+    WHERE outreach_conversation_threads.record_id=? AND email_records.id=?`).get(recordId, emailId) as EmailRecordRow | undefined; }
+  outreachRecordIdsForEmail(emailId: string) { return this.db.prepare(`SELECT outreach_conversation_threads.record_id FROM outreach_conversation_threads
+    JOIN email_thread_messages ON email_thread_messages.thread_id=outreach_conversation_threads.thread_id
+    WHERE email_thread_messages.email_id=?`).all(emailId) as Array<{ record_id: string }>; }
+  outreachConversation(recordId: string, before?: string, limit = 50) {
+    const safeLimit = Math.max(1, Math.min(Math.floor(limit) || 50, 100));
+    const cursor = before ? this.db.prepare(`SELECT email_records.received_at,email_records.created_at,email_records.id FROM email_records
+      JOIN email_thread_messages ON email_thread_messages.email_id=email_records.id
+      JOIN outreach_conversation_threads ON outreach_conversation_threads.thread_id=email_thread_messages.thread_id
+      WHERE outreach_conversation_threads.record_id=? AND email_records.id=?`).get(recordId, before) as { received_at: string; created_at: string; id: string } | undefined : undefined;
+    const boundary = cursor ? 'AND (email_records.received_at < ? OR (email_records.received_at = ? AND email_records.created_at < ?) OR (email_records.received_at = ? AND email_records.created_at = ? AND email_records.id < ?))' : '';
+    const values = cursor ? [recordId, cursor.received_at, cursor.received_at, cursor.created_at, cursor.received_at, cursor.created_at, cursor.id, safeLimit + 1] : [recordId, safeLimit + 1];
+    const descending = this.db.prepare(`SELECT email_records.id,email_records.received_at,email_records.body_text,email_records.subject,email_records.sender_name,email_records.sender_email,email_records.direction,email_records.original_url,email_thread_messages.thread_id,
+      (SELECT result_json FROM outreach_email_analyses WHERE content_hash=email_records.body_hash AND status='completed' ORDER BY completed_at DESC LIMIT 1) AS analysis_result_json,
+      (SELECT model FROM outreach_email_analyses WHERE content_hash=email_records.body_hash AND status='completed' ORDER BY completed_at DESC LIMIT 1) AS ai_model,
+      (SELECT completed_at FROM outreach_email_analyses WHERE content_hash=email_records.body_hash AND status='completed' ORDER BY completed_at DESC LIMIT 1) AS ai_completed_at
+      FROM email_records
+      JOIN email_thread_messages ON email_thread_messages.email_id=email_records.id
+      JOIN outreach_conversation_threads ON outreach_conversation_threads.thread_id=email_thread_messages.thread_id
+      WHERE outreach_conversation_threads.record_id=? ${boundary}
+      ORDER BY email_records.received_at DESC,email_records.created_at DESC,email_records.id DESC LIMIT ?`).all(...values) as Array<Omit<OutreachConversationMessage, 'ai_summary'> & { analysis_result_json: string | null }>;
+    const hasMore = descending.length > safeLimit;
+    const page = hasMore ? descending.slice(0, safeLimit) : descending;
+    const nextBefore = page.at(-1)?.id ?? null;
+    const messages = page.reverse().map(({ analysis_result_json, ...message }) => {
+      let ai_summary: string | null = null;
+      try { const parsed = analysis_result_json ? JSON.parse(analysis_result_json) as { summary?: unknown } : null; if (typeof parsed?.summary === 'string') ai_summary = parsed.summary; } catch { /* invalid historic analysis stays hidden */ }
+      return { ...message, ai_summary };
+    });
+    return { messages, has_more: hasMore, next_before: nextBefore };
+  }
+  outreachEmailAnalysis(contentHash: string, providerType: ProviderType, model: string, promptVersion: string) { return this.db.prepare('SELECT * FROM outreach_email_analyses WHERE content_hash=? AND provider_type=? AND model=? AND prompt_version=?').get(contentHash, providerType, model, promptVersion) as OutreachEmailAnalysisRow | undefined; }
+  startOutreachEmailAnalysis(input: { email_id: string; content_hash: string; provider_connection_id: string; provider_type: ProviderType; model: string; prompt_version: string }) {
+    const existing = this.outreachEmailAnalysis(input.content_hash, input.provider_type, input.model, input.prompt_version);
+    if (existing?.status === 'completed' || existing?.status === 'running') return { analysis: existing, started: false };
+    const now = new Date().toISOString();
+    if (existing) this.db.prepare("UPDATE outreach_email_analyses SET email_id=?,provider_connection_id=?,status='running',result_json=NULL,error_message=NULL,created_at=?,completed_at=NULL WHERE id=?").run(input.email_id, input.provider_connection_id, now, existing.id);
+    else this.db.prepare("INSERT INTO outreach_email_analyses (id,email_id,content_hash,provider_connection_id,provider_type,model,prompt_version,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(crypto.randomUUID(), input.email_id, input.content_hash, input.provider_connection_id, input.provider_type, input.model, input.prompt_version, 'running', now);
+    return { analysis: this.outreachEmailAnalysis(input.content_hash, input.provider_type, input.model, input.prompt_version)!, started: true };
+  }
+  completeOutreachEmailAnalysis(id: string, result: { summary: string }) { this.db.prepare("UPDATE outreach_email_analyses SET result_json=?,status='completed',error_message=NULL,completed_at=? WHERE id=?").run(JSON.stringify(result), new Date().toISOString(), id); return this.db.prepare('SELECT * FROM outreach_email_analyses WHERE id=?').get(id) as OutreachEmailAnalysisRow; }
+  failOutreachEmailAnalysis(id: string, error: unknown) { this.db.prepare("UPDATE outreach_email_analyses SET status='failed',error_message=?,completed_at=? WHERE id=?").run((error instanceof Error ? error.message : String(error)).slice(0, 500), new Date().toISOString(), id); }
+  outreachParticipants(recordId: string) { return this.db.prepare('SELECT record_id,email,name,first_seen_at,last_seen_at FROM outreach_participants WHERE record_id=? ORDER BY first_seen_at,email').all(recordId) as OutreachParticipantRow[]; }
+  private upsertOutreachParticipant(recordId: string, rawEmail: string, rawName: string | null, seenAt: string) {
+    const email = rawEmail.trim().toLowerCase(); if (!email || !email.includes('@')) return;
+    const name = rawName?.trim() || null;
+    this.db.prepare(`INSERT INTO outreach_participants (record_id,email,name,first_seen_at,last_seen_at) VALUES (?,?,?,?,?)
+      ON CONFLICT(record_id,email) DO UPDATE SET name=COALESCE(outreach_participants.name,excluded.name), last_seen_at=MAX(outreach_participants.last_seen_at,excluded.last_seen_at)`).run(recordId, email, name, seenAt, seenAt);
+  }
+  private recordEmailParticipants(recordId: string, emailId: string) {
+    const email = this.email(emailId); if (!email) return;
+    if (email.sender_email) this.upsertOutreachParticipant(recordId, email.sender_email, email.sender_name, email.received_at);
+    try {
+      const recipients = JSON.parse(email.recipients_json);
+      if (Array.isArray(recipients)) for (const recipient of recipients) if (typeof recipient?.address === 'string') this.upsertOutreachParticipant(recordId, recipient.address, typeof recipient.name === 'string' ? recipient.name : null, email.received_at);
+    } catch { /* malformed optional metadata cannot add an identity */ }
+  }
   linkThreadToOutreach(recordId: string, threadId: string, linkMethod: 'manual' | 'explicit' = 'manual') {
     const record = this.get(recordId); if (!record || record.record_type !== 'cold_outreach') throw new Error('Cold Outreach record not found.');
     if (!this.db.prepare('SELECT 1 FROM email_threads WHERE id=?').get(threadId)) throw new Error('Email thread not found.');
@@ -899,11 +985,18 @@ export class JobDatabase {
       ON CONFLICT(thread_id) DO UPDATE SET link_method=excluded.link_method`).run(recordId, threadId, linkMethod, now);
     const activity = this.db.prepare('SELECT MAX(email_records.received_at) AS received_at FROM email_records JOIN email_thread_messages ON email_thread_messages.email_id=email_records.id WHERE email_thread_messages.thread_id=?').get(threadId) as { received_at: string | null };
     if (activity.received_at) this.touchOutreachActivity(recordId, activity.received_at, now);
+    const threadEmails = this.db.prepare('SELECT email_id FROM email_thread_messages WHERE thread_id=?').all(threadId) as Array<{ email_id: string }>;
+    for (const email of threadEmails) this.recordEmailParticipants(recordId, email.email_id);
     return this.conversationForThread(threadId)!;
   }
   linkEmailToOutreach(recordId: string, emailId: string, linkMethod: 'manual' | 'explicit' = 'manual') {
     const threadId = this.threadForEmail(emailId)?.id ?? this.resolveEmailThread(emailId);
     return this.linkThreadToOutreach(recordId, threadId, linkMethod);
+  }
+  confirmOutreachEmailLink(recordId: string, emailId: string) {
+    const conversation = this.linkEmailToOutreach(recordId, emailId, 'manual');
+    this.db.prepare("UPDATE email_records SET review_status='ignored', unresolved_reason='outreach_linked', updated_at=? WHERE id=?").run(new Date().toISOString(), emailId);
+    return { conversation, email: this.email(emailId) };
   }
   outreachCandidatesForEmail(emailId: string): OutreachEmailCandidate[] {
     const email = this.email(emailId); if (!email) return [];
@@ -917,7 +1010,10 @@ export class JobDatabase {
     } catch { /* malformed optional metadata cannot create a match */ }
     if (!addresses.size) return [];
     const placeholders = [...addresses].map(() => '?').join(',');
-    const rows = this.db.prepare(`SELECT id AS record_id FROM jobs WHERE record_type='cold_outreach' AND LOWER(TRIM(COALESCE(outreach_contact_email,''))) IN (${placeholders}) ORDER BY created_at`).all(...addresses) as Array<{ record_id: string }>;
+    const rows = this.db.prepare(`SELECT id AS record_id FROM jobs WHERE record_type='cold_outreach' AND (
+      LOWER(TRIM(COALESCE(outreach_contact_email,''))) IN (${placeholders}) OR EXISTS (
+        SELECT 1 FROM outreach_participants WHERE outreach_participants.record_id=jobs.id AND outreach_participants.email IN (${placeholders})
+      )) ORDER BY created_at`).all(...addresses, ...addresses) as Array<{ record_id: string }>;
     return rows.map(row => ({ record_id: row.record_id, match_status: 'probable', reasons: ['contact_email'] }));
   }
   email(id: string) { return this.db.prepare("SELECT email_records.*, jobs.title AS job_title, jobs.company AS job_company, CASE WHEN email_records.review_status='applied' THEN 1 ELSE 0 END AS reversible_effect FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id WHERE email_records.id=?").get(id) as EmailRecordRow | undefined; }
@@ -926,6 +1022,7 @@ export class JobDatabase {
     return this.email(id);
   }
   reviewEmails() { return this.db.prepare("SELECT email_records.*, jobs.title AS job_title, jobs.company AS job_company, CASE WHEN email_records.review_status='applied' THEN 1 ELSE 0 END AS reversible_effect FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id WHERE email_records.review_status IN ('pending_review', 'applied') ORDER BY CASE email_records.review_status WHEN 'pending_review' THEN 0 ELSE 1 END, email_records.received_at DESC").all() as EmailRecordRow[]; }
+  outreachOptions() { return this.db.prepare("SELECT id, company, outreach_contact_name, outreach_contact_email, status FROM jobs WHERE record_type='cold_outreach' AND status<>'archived' ORDER BY company COLLATE NOCASE, created_at DESC").all() as Array<Pick<JobRow, 'id' | 'company' | 'outreach_contact_name' | 'outreach_contact_email' | 'status'>>; }
   emailLog(limit = 50, offset = 0) {
     const safeLimit = Math.max(1, Math.min(Math.floor(limit) || 50, 100)); const safeOffset = Math.max(0, Math.floor(offset) || 0);
     const items = this.db.prepare('SELECT email_records.id, email_records.uid_validity, email_records.imap_uid, email_records.received_at, email_records.category, email_records.proposed_job_id, email_records.match_status, email_records.review_status, email_records.unresolved_reason, email_records.initial_import, email_records.created_at, email_records.updated_at, jobs.title AS job_title, jobs.company AS job_company FROM email_records LEFT JOIN jobs ON jobs.id=email_records.proposed_job_id ORDER BY email_records.received_at DESC LIMIT ? OFFSET ?').all(safeLimit, safeOffset) as EmailLogRow[];
@@ -1040,7 +1137,7 @@ export class JobDatabase {
   updateBackupSyncStatus(input: { status: string; error?: string | null }) { const now = new Date().toISOString(); this.db.prepare('UPDATE backup_settings SET last_sync_at=?, last_sync_status=?, last_error=? WHERE id=1').run(now, input.status, input.error?.slice(0, 500) ?? null); return this.backupSettings(); }
   portableBackup() {
     const select = (table: string) => this.db.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[];
-    return { schema_version: 1, exported_at: new Date().toISOString(), data: { jobs: select('jobs'), snapshots: select('snapshots'), job_events: select('job_events'), interview_appointments: select('interview_appointments'), tags: select('tags'), job_tags: select('job_tags'), job_match_analyses: select('job_match_analyses'), ai_strategy_analyses: select('ai_strategy_analyses'), email_records: select('email_records'), email_locations: select('email_locations'), email_threads: select('email_threads'), email_thread_keys: select('email_thread_keys'), email_thread_messages: select('email_thread_messages'), outreach_conversation_threads: select('outreach_conversation_threads'), email_effects: select('email_effects'), ai_providers: this.db.prepare('SELECT id, provider_type, display_name, base_url, requests_per_minute, tokens_per_minute, 0 AS enabled, NULL AS profile_consent_at, created_at, updated_at FROM ai_providers').all(), ai_provider_connections: this.db.prepare('SELECT id, provider_id, sort_order, provider_type, display_name, base_url, model, temperature, max_output_tokens, timeout_ms, requests_per_minute, tokens_per_minute, 0 AS enabled, created_at, updated_at FROM ai_provider_connections').all(), ai_function_routes: select('ai_function_routes'), ai_settings: select('ai_settings'), imap_settings: this.db.prepare('SELECT id, host, port, tls_mode, username, mailbox, enabled, sync_interval_minutes, initial_sync_days, rejection_handling, ai_consent_at, last_sync_at, last_sync_status, last_error, processed_count, rejection_count, review_count, updated_at FROM imap_settings').all() } };
+    return { schema_version: 1, exported_at: new Date().toISOString(), data: { jobs: select('jobs'), snapshots: select('snapshots'), job_events: select('job_events'), interview_appointments: select('interview_appointments'), tags: select('tags'), job_tags: select('job_tags'), job_match_analyses: select('job_match_analyses'), ai_strategy_analyses: select('ai_strategy_analyses'), email_records: select('email_records'), email_locations: select('email_locations'), email_threads: select('email_threads'), email_thread_keys: select('email_thread_keys'), email_thread_messages: select('email_thread_messages'), outreach_conversation_threads: select('outreach_conversation_threads'), outreach_participants: select('outreach_participants'), outreach_email_analyses: select('outreach_email_analyses'), email_effects: select('email_effects'), ai_providers: this.db.prepare('SELECT id, provider_type, display_name, base_url, requests_per_minute, tokens_per_minute, 0 AS enabled, NULL AS profile_consent_at, created_at, updated_at FROM ai_providers').all(), ai_provider_connections: this.db.prepare('SELECT id, provider_id, sort_order, provider_type, display_name, base_url, model, temperature, max_output_tokens, timeout_ms, requests_per_minute, tokens_per_minute, 0 AS enabled, created_at, updated_at FROM ai_provider_connections').all(), ai_function_routes: select('ai_function_routes'), ai_settings: select('ai_settings'), imap_settings: this.db.prepare('SELECT id, host, port, tls_mode, username, mailbox, interview_mailbox, rejection_mailbox, outreach_mailbox, inbox_mailbox, sent_mailbox, enabled, sync_interval_minutes, initial_sync_days, rejection_handling, ai_consent_at, last_sync_at, last_sync_status, last_error, processed_count, rejection_count, review_count, updated_at FROM imap_settings').all() } };
   }
   sheetSyncPayload() {
     const jobs = this.db.prepare(`SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.source, jobs.source_url, jobs.status, jobs.interview_stage, jobs.application_id, jobs.result_outcome, jobs.archive_reason, jobs.captured_at, jobs.created_at, jobs.updated_at, (SELECT MAX(occurred_at) FROM job_events WHERE job_id=jobs.id AND type IN (${hiringStageEventSql})) AS last_event_at, GROUP_CONCAT(tags.name, ', ') AS tags FROM jobs LEFT JOIN job_tags ON job_tags.job_id=jobs.id LEFT JOIN tags ON tags.id=job_tags.tag_id GROUP BY jobs.id ORDER BY jobs.created_at DESC`).all();
@@ -1050,11 +1147,11 @@ export class JobDatabase {
     return { schema_version: 1, exported_at: new Date().toISOString(), sheets: { Jobs: jobs, Events: events, Tags: tags, Emails: emails } };
   }
   csvJobs() { return this.db.prepare("SELECT jobs.id, jobs.title, jobs.company, jobs.location, jobs.source, jobs.source_url, jobs.status, jobs.interview_stage, jobs.result_outcome, jobs.archive_reason, jobs.created_at, jobs.updated_at, GROUP_CONCAT(tags.name, ', ') AS tags FROM jobs LEFT JOIN job_tags ON job_tags.job_id=jobs.id LEFT JOIN tags ON tags.id=job_tags.tag_id GROUP BY jobs.id ORDER BY jobs.created_at DESC").all() as Array<Record<string, string | null>>; }
-  restorePortableBackup(data: { jobs: Record<string, unknown>[]; snapshots: Record<string, unknown>[]; job_events: Record<string, unknown>[]; interview_appointments?: Record<string, unknown>[]; tags: Record<string, unknown>[]; job_tags: Record<string, unknown>[]; job_match_analyses: Record<string, unknown>[]; ai_strategy_analyses?: Record<string, unknown>[]; email_records: Record<string, unknown>[]; email_locations?: Record<string, unknown>[]; email_threads?: Record<string, unknown>[]; email_thread_keys?: Record<string, unknown>[]; email_thread_messages?: Record<string, unknown>[]; outreach_conversation_threads?: Record<string, unknown>[]; email_effects: Record<string, unknown>[]; ai_providers?: Record<string, unknown>[]; ai_provider_connections?: Record<string, unknown>[]; ai_function_routes?: Record<string, unknown>[] }) {
+  restorePortableBackup(data: { jobs: Record<string, unknown>[]; snapshots: Record<string, unknown>[]; job_events: Record<string, unknown>[]; interview_appointments?: Record<string, unknown>[]; tags: Record<string, unknown>[]; job_tags: Record<string, unknown>[]; job_match_analyses: Record<string, unknown>[]; ai_strategy_analyses?: Record<string, unknown>[]; email_records: Record<string, unknown>[]; email_locations?: Record<string, unknown>[]; email_threads?: Record<string, unknown>[]; email_thread_keys?: Record<string, unknown>[]; email_thread_messages?: Record<string, unknown>[]; outreach_conversation_threads?: Record<string, unknown>[]; outreach_participants?: Record<string, unknown>[]; outreach_email_analyses?: Record<string, unknown>[]; email_effects: Record<string, unknown>[]; ai_providers?: Record<string, unknown>[]; ai_provider_connections?: Record<string, unknown>[]; ai_function_routes?: Record<string, unknown>[] }) {
     const tableColumns = (table: string) => new Set((this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name));
     const insertRows = (table: string, rows: Record<string, unknown>[], mode: 'insert' | 'ignore' | 'replace' = 'insert') => { const allowed = tableColumns(table); for (const row of rows) { const columns = Object.keys(row).filter(column => allowed.has(column)); if (!columns.length) continue; const values = columns.map(column => row[column]); const conflict = mode === 'ignore' ? 'OR IGNORE ' : mode === 'replace' ? 'OR REPLACE ' : ''; this.db.prepare(`INSERT ${conflict}INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...values); } };
     const transaction = this.db.transaction(() => {
-      this.db.exec('DELETE FROM email_effects; DELETE FROM outreach_conversation_threads; DELETE FROM email_thread_messages; DELETE FROM email_thread_keys; DELETE FROM email_threads; DELETE FROM email_locations; DELETE FROM email_records; DELETE FROM interview_appointments; DELETE FROM job_match_analyses; DELETE FROM ai_strategy_analyses; DELETE FROM snapshots; DELETE FROM job_events; DELETE FROM job_tags; DELETE FROM jobs; DELETE FROM tags;');
+      this.db.exec('DELETE FROM email_effects; DELETE FROM outreach_email_analyses; DELETE FROM outreach_participants; DELETE FROM outreach_conversation_threads; DELETE FROM email_thread_messages; DELETE FROM email_thread_keys; DELETE FROM email_threads; DELETE FROM email_locations; DELETE FROM email_records; DELETE FROM interview_appointments; DELETE FROM job_match_analyses; DELETE FROM ai_strategy_analyses; DELETE FROM snapshots; DELETE FROM job_events; DELETE FROM job_tags; DELETE FROM jobs; DELETE FROM tags;');
       const providerRows = (data.ai_providers ?? []).map(row => ({ ...row, encrypted_api_key: '', enabled: 0, profile_consent_at: null }));
       insertRows('ai_providers', providerRows, 'ignore');
       const models = (data.ai_provider_connections ?? []).map(row => {
@@ -1065,7 +1162,7 @@ export class JobDatabase {
       });
       insertRows('ai_provider_connections', models, 'ignore');
       insertRows('ai_function_routes', data.ai_function_routes ?? [], 'replace');
-      insertRows('tags', data.tags); insertRows('jobs', data.jobs); insertRows('job_tags', data.job_tags); insertRows('snapshots', data.snapshots); insertRows('job_events', data.job_events); insertRows('job_match_analyses', data.job_match_analyses); insertRows('ai_strategy_analyses', data.ai_strategy_analyses ?? []); insertRows('email_records', data.email_records); insertRows('email_locations', data.email_locations ?? []); this.db.exec(`INSERT OR IGNORE INTO email_locations (id,email_id,mailbox,uid_validity,imap_uid,first_seen_at,last_seen_at) SELECT lower(hex(randomblob(16))), id, CASE WHEN instr(uid_validity, char(31)) > 0 THEN substr(uid_validity, 1, instr(uid_validity, char(31)) - 1) ELSE '' END, uid_validity, imap_uid, created_at, updated_at FROM email_records`); insertRows('email_threads', data.email_threads ?? []); insertRows('email_thread_keys', data.email_thread_keys ?? []); insertRows('email_thread_messages', data.email_thread_messages ?? []); insertRows('outreach_conversation_threads', data.outreach_conversation_threads ?? []); insertRows('interview_appointments', data.interview_appointments ?? []); insertRows('email_effects', data.email_effects);
+      insertRows('tags', data.tags); insertRows('jobs', data.jobs); insertRows('job_tags', data.job_tags); insertRows('snapshots', data.snapshots); insertRows('job_events', data.job_events); insertRows('job_match_analyses', data.job_match_analyses); insertRows('ai_strategy_analyses', data.ai_strategy_analyses ?? []); insertRows('email_records', data.email_records); insertRows('email_locations', data.email_locations ?? []); this.db.exec(`INSERT OR IGNORE INTO email_locations (id,email_id,mailbox,uid_validity,imap_uid,first_seen_at,last_seen_at) SELECT lower(hex(randomblob(16))), id, CASE WHEN instr(uid_validity, char(31)) > 0 THEN substr(uid_validity, 1, instr(uid_validity, char(31)) - 1) ELSE '' END, uid_validity, imap_uid, created_at, updated_at FROM email_records`); insertRows('email_threads', data.email_threads ?? []); insertRows('email_thread_keys', data.email_thread_keys ?? []); insertRows('email_thread_messages', data.email_thread_messages ?? []); insertRows('outreach_conversation_threads', data.outreach_conversation_threads ?? []); insertRows('outreach_participants', data.outreach_participants ?? []); insertRows('outreach_email_analyses', data.outreach_email_analyses ?? []); this.db.exec(`INSERT OR IGNORE INTO outreach_participants (record_id,email,name,first_seen_at,last_seen_at) SELECT id, LOWER(TRIM(outreach_contact_email)), outreach_contact_name, created_at, updated_at FROM jobs WHERE record_type='cold_outreach' AND TRIM(COALESCE(outreach_contact_email,''))<>''`); const linkedEmails = this.db.prepare(`SELECT outreach_conversation_threads.record_id,email_records.id AS email_id FROM outreach_conversation_threads JOIN email_thread_messages ON email_thread_messages.thread_id=outreach_conversation_threads.thread_id JOIN email_records ON email_records.id=email_thread_messages.email_id`).all() as Array<{ record_id: string; email_id: string }>; for (const item of linkedEmails) this.recordEmailParticipants(item.record_id, item.email_id); insertRows('interview_appointments', data.interview_appointments ?? []); insertRows('email_effects', data.email_effects);
     });
     transaction(); return { jobs: data.jobs.length, snapshots: data.snapshots.length, events: data.job_events.length, interviews: data.interview_appointments?.length ?? 0, tags: data.tags.length, emails: data.email_records.length };
   }

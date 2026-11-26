@@ -26,8 +26,16 @@ describe('cold outreach data model', () => {
       const filtered = await app.inject({ method: 'GET', url: '/api/jobs?archive=all&record_type=cold_outreach' });
       expect(filtered.json()).toHaveLength(1);
       expect(filtered.json()[0]).toMatchObject({ id: outreach.id, outreach_contact_email: 'ada@acme.test' });
+      const created = await app.inject({ method: 'POST', url: '/api/outreach', payload: { company: 'Northwind', contact_name: 'Grace', contact_email: 'GRACE@NORTHWIND.TEST', summary: 'Met at a conference.' } });
+      expect(created.statusCode).toBe(200);
+      expect(created.json()).toMatchObject({ record_type: 'cold_outreach', title: null, company: 'Northwind', outreach_contact_email: 'grace@northwind.test' });
       const detail = await app.inject({ method: 'GET', url: `/api/jobs/${outreach.id}` });
       expect(detail.json()).toMatchObject({ id: outreach.id, record_type: 'cold_outreach', title: null, description_html: null, appointments: [], ai_match: null });
+      const conversation = await app.inject({ method: 'GET', url: `/api/jobs/${outreach.id}/conversation?limit=1` });
+      expect(conversation.statusCode).toBe(200);
+      expect(conversation.json()).toMatchObject({ messages: [], has_more: false, next_before: null, participants: [expect.objectContaining({ email: 'ada@acme.test', name: 'Ada Contact' })] });
+      const applicationConversation = await app.inject({ method: 'GET', url: `/api/jobs/${application.jobId}/conversation` });
+      expect(applicationConversation.statusCode).toBe(409);
       const search = await app.inject({ method: 'GET', url: '/api/search?q=Ada' });
       expect(search.json()).toEqual([expect.objectContaining({ id: outreach.id, record_type: 'cold_outreach', outreach_contact_name: 'Ada Contact' })]);
 
@@ -41,6 +49,10 @@ describe('cold outreach data model', () => {
       const updated = await app.inject({ method: 'PATCH', url: `/api/jobs/${outreach.id}`, payload: { outreach_contact_name: 'Ada Lovelace', outreach_summary: 'Manual context update.', status: 'interview' } });
       expect(updated.statusCode).toBe(200);
       expect(updated.json()).toMatchObject({ record_type: 'cold_outreach', title: null, outreach_contact_name: 'Ada Lovelace', outreach_summary: 'Manual context update.', status: 'interview', interview_stage: null });
+      const archived = await app.inject({ method: 'PATCH', url: `/api/jobs/${outreach.id}`, payload: { status: 'archived' } });
+      expect(archived.statusCode).toBe(200);
+      const invalidRestore = await app.inject({ method: 'PATCH', url: `/api/jobs/${outreach.id}`, payload: { status: 'interview' } });
+      expect(invalidRestore.statusCode).toBe(409);
       await app.close();
 
       const verified = new JobDatabase(databasePath);
@@ -85,11 +97,17 @@ describe('cold outreach data model', () => {
     expect(db.hasEmail(`Sent\u001f7`, 42)).toBe(true);
     expect(db.db.prepare('SELECT mailbox, email_id FROM email_locations').get()).toEqual({ mailbox: 'Sent', email_id: email.id });
     expect(db.db.prepare('SELECT record_id FROM outreach_conversation_threads WHERE thread_id=?').get(threadId)).toEqual({ record_id: outreach.id });
+    const model = db.createConnection({ provider_type: 'ollama', display_name: 'Summary model', encrypted_api_key: '', model: 'summary-model', temperature: 0.1, max_output_tokens: 256, timeout_ms: 60_000, requests_per_minute: 10, tokens_per_minute: 20_000, enabled: true });
+    const started = db.startOutreachEmailAnalysis({ email_id: email.id, content_hash: email.body_hash, provider_connection_id: model.id, provider_type: 'ollama', model: 'summary-model', prompt_version: 'outreach-email-summary-v1' });
+    const completed = db.completeOutreachEmailAnalysis(started.analysis.id, { summary: 'Nikolay sent an introduction to the contact.' });
+    expect(db.outreachConversation(outreach.id).messages).toMatchObject([{ id: email.id, ai_summary: 'Nikolay sent an introduction to the contact.', ai_model: 'summary-model' }]);
 
     const backup = db.portableBackup(); const restored = new JobDatabase(':memory:'); restored.restorePortableBackup(backup.data);
     expect(restored.get(outreach.id)).toMatchObject({ record_type: 'cold_outreach', outreach_contact_email: 'contact@example.test' });
     expect(restored.email(email.id)).toMatchObject({ rfc_message_id: '<message-1@example.test>', direction: 'outgoing' });
     expect(restored.db.prepare('SELECT record_id FROM outreach_conversation_threads WHERE thread_id=?').get(threadId)).toEqual({ record_id: outreach.id });
+    expect(restored.outreachParticipants(outreach.id).map(participant => participant.email)).toEqual(['contact@example.test', 'nikolay@example.test']);
+    expect(restored.db.prepare('SELECT result_json FROM outreach_email_analyses WHERE id=?').get(completed.id)).toEqual({ result_json: JSON.stringify({ summary: 'Nikolay sent an introduction to the contact.' }) });
     restored.db.close(); db.db.close();
   });
 
@@ -117,7 +135,7 @@ describe('cold outreach data model', () => {
     const reply = db.saveEmail({
       ...base, body_text: 'Reply', body_hash: 'reply-body', uid_validity: `INBOX\u001f8`, imap_uid: 100, received_at: '2026-10-22T12:00:00.000Z',
       rfc_message_id: '<message-2@example.test>', in_reply_to: '<message-1@example.test>', references_json: '["<message-1@example.test>"]',
-      provider_message_id: 'provider-message-2', provider_thread_id: 'provider-thread-2', sender_email: 'contact@example.test', direction: 'incoming'
+      provider_message_id: 'provider-message-2', provider_thread_id: 'provider-thread-2', sender_email: 'contact@example.test', recipients_json: '[{"name":"Hiring manager","address":"manager@example.test"}]', direction: 'incoming'
     });
     expect(db.threadForEmail(reply.id)?.id).toBe(db.threadForEmail(sent.id)?.id);
     expect(db.outreachCandidatesForEmail(reply.id)).toEqual([{ record_id: outreach.id, match_status: 'exact', reasons: ['linked_thread'] }]);
@@ -125,12 +143,17 @@ describe('cold outreach data model', () => {
     const detached = db.saveEmail({
       ...base, body_text: 'New subject', body_hash: 'new-body', uid_validity: `INBOX\u001f8`, imap_uid: 101, received_at: '2026-10-23T12:00:00.000Z',
       rfc_message_id: '<message-3@example.test>', provider_message_id: 'provider-message-3', provider_thread_id: 'provider-thread-3',
-      sender_email: 'contact@example.test', direction: 'incoming'
+      sender_email: 'manager@example.test', direction: 'incoming'
     });
     expect(db.outreachCandidatesForEmail(detached.id)).toEqual([{ record_id: outreach.id, match_status: 'probable', reasons: ['contact_email'] }]);
-    db.linkEmailToOutreach(outreach.id, detached.id);
+    const linked = db.confirmOutreachEmailLink(outreach.id, detached.id);
+    expect(linked.email).toMatchObject({ review_status: 'ignored', unresolved_reason: 'outreach_linked' });
     expect(db.threadsForOutreach(outreach.id)).toHaveLength(2);
     expect(db.messagesForOutreach(outreach.id).map(message => message.id)).toEqual([sent.id, reply.id, detached.id]);
+    const newestPage = db.outreachConversation(outreach.id, undefined, 2);
+    expect(newestPage).toMatchObject({ messages: [{ id: reply.id }, { id: detached.id }], has_more: true, next_before: reply.id });
+    expect(db.outreachConversation(outreach.id, newestPage.next_before!, 2)).toMatchObject({ messages: [{ id: sent.id }], has_more: false, next_before: sent.id });
+    expect(db.outreachParticipants(outreach.id).map(participant => participant.email)).toEqual(['contact@example.test', 'me@example.test', 'manager@example.test']);
     expect(db.get(outreach.id)?.last_activity_at).toBe('2026-10-23T12:00:00.000Z');
 
     const sameDomain = db.createOutreachRecord({ company: 'Example', contact_email: 'other@example.test' });

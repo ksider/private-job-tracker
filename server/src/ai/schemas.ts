@@ -8,7 +8,7 @@ export const ConnectionCreateSchema = z.object({ provider_type: ProviderTypeSche
 export const ConnectionPatchSchema = ConnectionCreateSchema.partial().refine(value => Object.keys(value).length > 0, 'At least one field is required');
 export const ModelCreateSchema = z.object({ model: z.string().trim().min(1).max(200), temperature: z.number().min(0).max(2).optional().default(0.1), max_output_tokens: z.number().int().min(128).max(16_384).optional().default(1200), timeout_ms: z.number().int().min(5_000).max(180_000).optional().default(60_000), enabled: z.boolean().optional().default(true) });
 export const ModelPatchSchema = ModelCreateSchema.partial().extend({ sort_order: z.number().int().min(0).max(10_000).optional() }).refine(value => Object.keys(value).length > 0, 'At least one field is required');
-export const AiFunctionKeySchema = z.enum(['match', 'tags', 'location', 'generic_parse', 'snapshot_parse', 'email', 'cover_letter', 'strategy']);
+export const AiFunctionKeySchema = z.enum(['match', 'tags', 'location', 'generic_parse', 'snapshot_parse', 'email', 'outreach_email', 'cover_letter', 'strategy']);
 export const AiFunctionRoutePatchSchema = z.object({ target_type: z.enum(['provider', 'model']).nullable(), provider_id: z.string().uuid().nullable().optional(), model_id: z.string().uuid().nullable().optional(), automatic_enabled: z.boolean().optional() });
 export const AiSettingsPatchSchema = z.object({ default_connection_id: z.string().uuid().nullable().optional(), default_model: z.string().trim().max(200).nullable().optional(), tag_connection_id: z.string().uuid().nullable().optional(), email_connection_id: z.string().uuid().nullable().optional(), generic_parse_connection_id: z.string().uuid().nullable().optional(), snapshot_parse_connection_id: z.string().uuid().nullable().optional(), auto_match_on_import: z.boolean().optional(), auto_tags_on_import: z.boolean().optional(), auto_generic_parse_on_import: z.boolean().optional(), auto_location_on_import: z.boolean().optional(), auto_email_classification: z.boolean().optional() }).refine(value => Object.keys(value).length > 0, 'At least one field is required');
 export const DisplaySettingsSchema = z.object({ inactive_after_days: z.number().int().min(1).max(365) });
@@ -72,3 +72,8 @@ export const StrategyAdviceSchema = z.object({
   caveat: StrategyTextSchema,
 });
 export type StrategyAdvice = z.infer<typeof StrategyAdviceSchema>;
+
+export const OutreachEmailAnalysisSchema = z.object({
+  summary: z.string().trim().min(1).max(360),
+});
+export type OutreachEmailAnalysis = z.infer<typeof OutreachEmailAnalysisSchema>;

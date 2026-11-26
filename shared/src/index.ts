@@ -3,6 +3,21 @@ import { z } from 'zod';
 export const JOB_STATUSES = ['saved', 'sent', 'interview', 'result', 'archived'] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
 export const JobStatusSchema = z.enum(JOB_STATUSES);
+export const RECORD_TYPES = ['application', 'cold_outreach'] as const;
+export type RecordType = (typeof RECORD_TYPES)[number];
+export const RecordTypeSchema = z.enum(RECORD_TYPES);
+// The board has always allowed moving an active card between its active stages.
+// Keep that behavior, but make restoring from archive explicit and shared by both
+// record types so DnD cannot bypass the API's lifecycle guard.
+const activeStatuses = ['saved', 'sent', 'interview', 'result'] as const satisfies readonly JobStatus[];
+const recordStatusTransitions = (): Record<JobStatus, readonly JobStatus[]> => ({
+  saved: [...activeStatuses, 'archived'], sent: [...activeStatuses, 'archived'], interview: [...activeStatuses, 'archived'], result: [...activeStatuses, 'archived'], archived: ['saved']
+});
+export const RECORD_STATUS_TRANSITIONS: Record<RecordType, Record<JobStatus, readonly JobStatus[]>> = {
+  application: recordStatusTransitions(),
+  cold_outreach: recordStatusTransitions()
+};
+export const canTransitionRecordStatus = (recordType: RecordType, from: JobStatus, to: JobStatus) => RECORD_STATUS_TRANSITIONS[recordType][from].includes(to);
 export const JOB_EVENT_TYPES = ['saved', 'applied', 'hr_screening', 'interview', 'final_interview', 'follow_up', 'result', 'email_detected', 'rejection_received', 'email_status_changed'] as const;
 export type JobEventType = (typeof JOB_EVENT_TYPES)[number];
 export const JobEventTypeSchema = z.enum(JOB_EVENT_TYPES);
@@ -55,6 +70,15 @@ export const JobPatchSchema = z.object({
   outreach_summary: z.string().trim().max(2_000).transform(value => value || null).nullable().optional()
 }).refine(value => Object.values(value).some(value => value !== undefined), 'At least one field is required');
 export type JobPatch = z.infer<typeof JobPatchSchema>;
+export const ColdOutreachCreateSchema = z.object({
+  company: JobTextField,
+  contact_name: JobTextField,
+  contact_email: z.string().trim().email().max(500).transform(value => value.toLowerCase()).nullable().optional(),
+  summary: z.string().trim().max(2_000).transform(value => value || null).nullable().optional(),
+  notes: z.string().max(20_000).optional(),
+  occurred_at: z.string().datetime().optional()
+});
+export type ColdOutreachCreate = z.infer<typeof ColdOutreachCreateSchema>;
 export const JobEventCreateSchema = z.object({
   type: JobEventTypeSchema,
   occurred_at: z.string().datetime(),
