@@ -232,6 +232,27 @@ export function buildApp(config: AppConfig) {
       return reply.code(502).send({ error: message.startsWith('AI provider') || message.startsWith('AI provider returned') ? message : 'Outreach email analysis failed. Check the server log for details.' });
     }
   });
+  app.post('/api/jobs/:id/conversation/analyze', async (request, reply) => {
+    const id = (request.params as { id: string }).id; const job = db.get(id);
+    if (!job) return reply.code(404).send({ error: 'Job not found' });
+    if (job.record_type !== 'cold_outreach') return reply.code(409).send({ error: 'Conversation analysis is available for Cold Outreach records only.' });
+    if (!db.imapSettings().ai_consent_at) return reply.code(412).send({ error: 'Save consent to send email text to AI first.' });
+    const messages = db.messagesForOutreach(id); let processed = 0; let cached = 0; let skipped = 0;
+    try {
+      for (const email of messages) {
+        if (email.body_source === 'missing' || !email.body_text.trim()) { skipped++; continue; }
+        const result = await analyzeOutreachEmail({ db, aiRouter, emailId: email.id });
+        db.applyOutreachAiDetails(id, email.id, outreachEmailAnalysisView(result.analysis));
+        processed++; if (result.cached) cached++;
+      }
+      return { processed, cached, skipped, job: db.get(id) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Outreach conversation analysis failed.';
+      app.log.warn({ err: error, jobId: id }, 'Outreach conversation analysis failed');
+      if (message.startsWith('No enabled AI model') || message.includes('already running')) return reply.code(409).send({ error: message });
+      return reply.code(502).send({ error: message.startsWith('AI provider') || message.startsWith('AI provider returned') ? message : 'Outreach conversation analysis failed. Check the server log for details.' });
+    }
+  });
   app.get('/api/jobs/:id', async (request, reply) => { const id = (request.params as { id: string }).id; const job = db.get(id); if (!job) return reply.code(404).send({ error: 'Job not found' }); const profile = job.record_type === 'application' ? await profiles.load().catch(() => undefined) : undefined; return { ...jobView(job), tags: db.tagsForJob(id), description_html: job.record_type === 'application' ? safeDescriptionHtml(job.description_html) : null, events: db.events(id), appointments: job.record_type === 'application' ? db.appointments(id) : [], ai_match: job.record_type === 'application' ? analysisView(db.latestAnalysis(id), profile, job.description_text) : null }; });
   app.get('/api/jobs/:id/technical', async (request, reply) => {
     const id = (request.params as { id: string }).id; const job = db.get(id); if (!job) return reply.code(404).send({ error: 'Job not found' });

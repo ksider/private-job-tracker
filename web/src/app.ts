@@ -966,9 +966,9 @@ function renderDetailMeta(job: Job) {
   target.querySelector<HTMLButtonElement>('[data-filter-job-country]')?.addEventListener('click', () => openJobsWithFilter({ country: job.geo_country_code! }));
 }
 function renderOutreachConversation() {
-  const section = $('#detail-conversation'); const participantList = $('#detail-conversation-participants'); const messages = $('#detail-conversation-messages'); const more = $('#detail-conversation-more') as HTMLButtonElement;
+  const section = $('#detail-conversation'); const participantList = $('#detail-conversation-participants'); const messages = $('#detail-conversation-messages'); const more = $('#detail-conversation-more') as HTMLButtonElement; const analyzeConversation = $('#detail-conversation-analyze') as HTMLButtonElement;
   const isOutreach = current?.record_type === 'cold_outreach';
-  section.classList.toggle('hidden', !isOutreach);
+  section.classList.toggle('hidden', !isOutreach); analyzeConversation.classList.toggle('hidden', !isOutreach);
   if (!isOutreach) return;
   if (!outreachConversation) {
     participantList.textContent = 'Загружаем участников…'; messages.innerHTML = '<p class="text-sm text-slate-500">Загружаем переписку…</p>'; more.classList.add('hidden');
@@ -999,6 +999,16 @@ function renderOutreachConversation() {
     } catch (error) { show(error instanceof Error ? error.message : 'Не удалось создать AI-резюме.', true); }
     finally { if (button.isConnected) { button.disabled = false; button.textContent = 'Сделать AI-резюме'; } }
   });
+  analyzeConversation.onclick = async () => {
+    if (!current || current.record_type !== 'cold_outreach') return;
+    const recordId = current.id; analyzeConversation.disabled = true; const label = analyzeConversation.textContent; analyzeConversation.textContent = 'AI распознаёт…';
+    try {
+      const result = await api(`/api/jobs/${recordId}/conversation/analyze`, { method: 'POST', body: '{}' }) as { processed: number; cached: number; skipped: number };
+      await openJob(recordId, false);
+      show(result.processed ? `AI обработал ${result.processed} писем${result.cached ? `, из них ${result.cached} из кэша` : ''}.` : 'В карточке нет писем с текстом для AI-разбора.');
+    } catch (error) { show(error instanceof Error ? error.message : 'Не удалось распознать переписку.', true); }
+    finally { if (analyzeConversation.isConnected) { analyzeConversation.disabled = false; analyzeConversation.textContent = label; } }
+  };
   more.classList.toggle('hidden', !outreachConversation.has_more);
   more.onclick = () => void loadOutreachConversation(true).catch(error => show(error instanceof Error ? error.message : 'Не удалось загрузить более ранние письма.', true));
 }
