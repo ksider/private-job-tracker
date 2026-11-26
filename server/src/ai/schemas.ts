@@ -80,3 +80,11 @@ export const OutreachEmailAnalysisSchema = z.object({
   company: z.string().trim().min(1).max(240).nullable().optional().default(null),
 });
 export type OutreachEmailAnalysis = z.infer<typeof OutreachEmailAnalysisSchema>;
+
+export const OutreachCardAnalysisSchema = z.object({
+  company: z.string().trim().min(1).max(240).nullable().optional().default(null),
+  contacts: z.array(z.object({ name: z.string().trim().min(1).max(240).nullable().optional().default(null), email: z.string().trim().email().max(320) })).max(20).default([]),
+  tag_ids: z.array(z.string().trim().min(1).max(100)).max(5).default([]),
+  new_tags: z.array(AiTagNameSchema).max(5).default([]),
+});
+export type OutreachCardAnalysis = z.infer<typeof OutreachCardAnalysisSchema>;

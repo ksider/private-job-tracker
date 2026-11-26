@@ -204,4 +204,20 @@ describe('cold outreach data model', () => {
       migrated.db.close();
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
+
+  it('moves whole conversation threads to the canonical outreach record and restores them on undo', () => {
+    const db = new JobDatabase(':memory:'); const now = '2026-10-26T12:00:00.000Z';
+    const canonical = db.createOutreachRecord({ company: 'Canonical Co', contact_email: 'canonical@example.test', occurred_at: now });
+    const source = db.createOutreachRecord({ company: 'Source Co', contact_email: 'source@example.test', occurred_at: now });
+    const threadId = crypto.randomUUID(); db.db.prepare('INSERT INTO email_threads (id,created_at,updated_at) VALUES (?,?,?)').run(threadId, now, now);
+    db.db.prepare('INSERT INTO outreach_conversation_threads (record_id,thread_id,link_method,linked_at) VALUES (?,?,?,?)').run(source.id, threadId, 'manual', now);
+    const merged = db.mergeOutreachRecords(canonical.id, source.id, { company: 'source' });
+    expect(db.conversationForThread(threadId)).toMatchObject({ record_id: canonical.id });
+    expect(db.get(canonical.id)).toMatchObject({ company: 'Source Co' });
+    expect(db.get(source.id)).toMatchObject({ status: 'archived' });
+    db.undoOutreachMerge(canonical.id, merged.operation_id);
+    expect(db.conversationForThread(threadId)).toMatchObject({ record_id: source.id });
+    expect(db.get(source.id)).toMatchObject({ status: 'saved' });
+    db.db.close();
+  });
 });
